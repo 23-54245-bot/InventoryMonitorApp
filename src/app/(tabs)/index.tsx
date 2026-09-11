@@ -180,11 +180,11 @@ export default function HomeScreen() {
             const status = getSafetyStockStatus(product);
             return (
               <View key={product.id} style={[styles.healthRow, { borderBottomColor: theme.colors.outline }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.healthTitle, { color: theme.colors.onSurface }]}>{product.name}</Text>
-                  <Text style={[styles.healthMeta, { color: theme.colors.onSurfaceVariant }]}>{product.currentStock}/{product.lowStockThreshold} {product.unitType}</Text>
+                <View style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
+                  <Text style={[styles.healthTitle, { color: theme.colors.onSurface }]} numberOfLines={2} ellipsizeMode="tail">{product.name}</Text>
+                  <Text style={[styles.healthMeta, { color: theme.colors.onSurfaceVariant }]} numberOfLines={1} ellipsizeMode="tail">{product.currentStock}/{product.lowStockThreshold} {product.unitType}</Text>
                 </View>
-                <Chip style={status.tone === "critical" ? [styles.statusChip, { backgroundColor: `${theme.colors.error}22` }] : [styles.statusChip, { backgroundColor: `${theme.colors.tertiary}22` }]} textStyle={{ color: status.tone === "critical" ? theme.colors.error : theme.colors.tertiary }}>{status.label}</Chip>
+                <Chip compact style={[status.tone === "critical" ? [styles.statusChip, { backgroundColor: `${theme.colors.error}22` }] : [styles.statusChip, { backgroundColor: `${theme.colors.tertiary}22` }], { flexShrink: 0, alignSelf: "flex-start" }]} textStyle={{ color: status.tone === "critical" ? theme.colors.error : theme.colors.tertiary }}>{status.label}</Chip>
               </View>
             );
           })}
@@ -206,11 +206,11 @@ export default function HomeScreen() {
                 <View style={[styles.activityIcon, { backgroundColor: item.type === "in" ? `${theme.colors.primary}16` : `${theme.colors.secondary}16` }]}>
                   <MaterialCommunityIcons name={item.type === "in" ? "arrow-top-right" : "arrow-bottom-right"} size={18} color={item.type === "in" ? theme.colors.primary : theme.colors.secondary} />
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.activityTitle, { color: theme.colors.onSurface }]}>{item.productName}</Text>
-                  <Text style={[styles.activityMeta, { color: theme.colors.onSurfaceVariant }]}>{formatRelativeTime(item.timestamp)}</Text>
+                <View style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
+                  <Text style={[styles.activityTitle, { color: theme.colors.onSurface }]} numberOfLines={2} ellipsizeMode="tail">{item.productName}</Text>
+                  <Text style={[styles.activityMeta, { color: theme.colors.onSurfaceVariant }]} numberOfLines={1} ellipsizeMode="tail">{formatRelativeTime(item.timestamp)}</Text>
                 </View>
-                <Text style={[styles.activityQty, { color: item.type === "in" ? theme.colors.primary : theme.colors.secondary }]}>{item.quantity}</Text>
+                <Text style={[styles.activityQty, { color: item.type === "in" ? theme.colors.primary : theme.colors.secondary, flexShrink: 0 }]}>{item.quantity}</Text>
               </View>
             )}
           />
@@ -310,8 +310,8 @@ const styles = StyleSheet.create({
   alertRow: { flexDirection: "row", gap: 8, marginBottom: 10 },
   pill: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
   pillText: { fontWeight: "700", fontSize: 12 },
-  healthRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8, borderBottomWidth: 1 },
-  healthTitle: { fontWeight: "700" },
+  healthRow: { flexDirection: "row", alignItems: "flex-start", gap: 10, paddingVertical: 8, borderBottomWidth: 1, minWidth: 0 },
+  healthTitle: { fontWeight: "700", flexShrink: 1 },
   healthMeta: { fontSize: 12, marginTop: 2 },
   statusChip: { borderRadius: 12 },
   section: { marginBottom: 12 },
@@ -322,9 +322,9 @@ const styles = StyleSheet.create({
   quickLabel: { fontSize: 12, lineHeight: 16, fontWeight: "700", flexShrink: 1, textAlign: "center" },
   listCard: { borderRadius: 16, marginBottom: 12, borderWidth: 1, elevation: 3 },
   cardHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  activityRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, borderBottomWidth: 1 },
+  activityRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, borderBottomWidth: 1, minWidth: 0 },
   activityIcon: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center" },
-  activityTitle: { fontWeight: "700" },
+  activityTitle: { fontWeight: "700", flexShrink: 1 },
   activityMeta: { fontSize: 12, marginTop: 2 },
-  activityQty: { fontWeight: "800" },
+  activityQty: { fontWeight: "800", flexShrink: 0 },
 });

@@ -66,7 +66,7 @@ export default function ProfitScreen() {
         <Card.Content>
           <View style={styles.cardHeader}><Text style={[styles.cardTitle, { color: theme.colors.onSurface }]}>Profit by Sale</Text><Text style={[styles.helper, { color: theme.colors.onSurfaceVariant }]}>Stock Out</Text></View>
           {profitData.rows.length ? profitData.rows.map((row) => <View key={row.id} style={styles.row}>
-            <View style={styles.rowHeader}><Text style={[styles.productName, { color: theme.colors.onSurface }]} numberOfLines={1}>{row.productName}</Text><Text style={[styles.profitValue, { color: theme.colors.secondary }]}>{getCurrency(row.profit)}</Text></View>
+            <View style={styles.rowHeader}><Text style={[styles.productName, { color: theme.colors.onSurface }]} numberOfLines={1} ellipsizeMode="tail">{row.productName}</Text><Text style={[styles.profitValue, { color: theme.colors.secondary }]}>{getCurrency(row.profit)}</Text></View>
             <Text style={[styles.rowMeta, { color: theme.colors.onSurfaceVariant }]}>{row.quantity} units · Revenue {getCurrency(row.revenue)}</Text>
             <ProgressBar progress={row.profit / maxProfit} color={theme.colors.secondary} style={styles.progress} />
           </View>) : <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>No stock-out movements recorded yet.</Text>}
@@ -101,9 +101,9 @@ const styles = StyleSheet.create({
   cardTitle: { fontSize: 17, fontWeight: "800" },
   helper: { fontSize: 11 },
   row: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "rgba(24,59,86,0.1)" },
-  rowHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
-  productName: { flex: 1, fontSize: 14, fontWeight: "700" },
-  profitValue: { fontSize: 14, fontWeight: "800" },
+  rowHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, minWidth: 0 },
+  productName: { flex: 1, fontSize: 14, fontWeight: "700", flexShrink: 1, marginRight: 8 },
+  profitValue: { fontSize: 14, fontWeight: "800", flexShrink: 0 },
   rowMeta: { fontSize: 11, marginTop: 4 },
   progress: { height: 6, borderRadius: 4, marginTop: 8 },
   empty: { paddingVertical: 24, textAlign: "center" },

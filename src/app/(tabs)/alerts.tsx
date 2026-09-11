@@ -151,8 +151,11 @@ function LowStockItem({ language, product, outOfStock = false, onRestock }: { la
         <View style={styles.lowStockHeader}>
           <Text style={styles.productIcon}>{product.icon}</Text>
           <View style={styles.lowStockIdentity}>
-            <View style={styles.productTitleRow}><Text style={[styles.productTitle, { color: theme.colors.onSurface }]}>{product.name}</Text><Text style={[styles.stateBadge, { color: outOfStock ? theme.colors.error : theme.colors.tertiary }]}>{outOfStock ? "OUT" : "LOW"}</Text></View>
-            <Text style={[styles.productMeta, { color: theme.colors.onSurfaceVariant }]}>{product.sku} · {product.category}</Text>
+            <View style={styles.productTitleRow}>
+              <Text style={[styles.productTitle, { color: theme.colors.onSurface }]} numberOfLines={2} ellipsizeMode="tail">{product.name}</Text>
+              <Text style={[styles.stateBadge, { color: outOfStock ? theme.colors.error : theme.colors.tertiary }]}>{outOfStock ? "OUT" : "LOW"}</Text>
+            </View>
+            <Text style={[styles.productMeta, { color: theme.colors.onSurfaceVariant }]} numberOfLines={1} ellipsizeMode="tail">{product.sku} · {product.category}</Text>
           </View>
         </View>
         <View style={styles.lowStockDetails}><View><Text style={[styles.remaining, { color: theme.colors.onSurface }]}>{product.currentStock} {product.unitType} {translate(language, "remainingLabel")}</Text><Text style={[styles.minimum, { color: theme.colors.onSurfaceVariant }]}>{outOfStock ? `${translate(language, "minRequiredLabel")}: ${product.lowStockThreshold}` : `Need ${needed} more to reach min`}</Text></View><Button compact mode="contained" buttonColor={theme.colors.primary} onPress={() => onRestock(product)}>{outOfStock ? translate(language, "restockLabel") : translate(language, "restockNowLabel")}</Button></View>
@@ -201,8 +204,11 @@ function ExpiryItem({ language, product, onView }: { language: string; product: 
         <View style={styles.lowStockHeader}>
           <View style={[styles.badge, { backgroundColor: `${statusColor}18` }]}><IconButton icon="calendar-alert" iconColor={statusColor} size={21} style={styles.badgeIcon} /></View>
           <View style={styles.lowStockIdentity}>
-            <View style={styles.productTitleRow}><Text style={[styles.productTitle, { color: theme.colors.onSurface }]}>{product.name}</Text><Text style={[styles.stateBadge, { color: statusColor }]}>{expiry.label.toUpperCase()}</Text></View>
-            <Text style={[styles.productMeta, { color: theme.colors.onSurfaceVariant }]}>{product.sku} · {product.category}</Text>
+            <View style={styles.productTitleRow}>
+              <Text style={[styles.productTitle, { color: theme.colors.onSurface }]} numberOfLines={2} ellipsizeMode="tail">{product.name}</Text>
+              <Text style={[styles.stateBadge, { color: statusColor }]}>{expiry.label.toUpperCase()}</Text>
+            </View>
+            <Text style={[styles.productMeta, { color: theme.colors.onSurfaceVariant }]} numberOfLines={1} ellipsizeMode="tail">{product.sku} · {product.category}</Text>
           </View>
         </View>
         <View style={styles.lowStockDetails}><View><Text style={[styles.remaining, { color: theme.colors.onSurface }]}>{translate(language, "expiryDateLabel")}</Text><Text style={[styles.minimum, { color: theme.colors.onSurfaceVariant }]}>{product.expiryDate ? new Date(product.expiryDate).toLocaleDateString() : translate(language, "noExpiryDate")}</Text></View><Button compact mode="contained" buttonColor={theme.colors.primary} onPress={() => onView(product)}>{translate(language, "viewProductButton")}</Button></View>
@@ -251,10 +257,10 @@ const styles = StyleSheet.create({
   lowStockCard: { borderRadius: 16, borderWidth: 1, marginBottom: 10, elevation: 1 },
   lowStockHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
   productIcon: { fontSize: 28, width: 42, textAlign: "center" },
-  lowStockIdentity: { flex: 1 },
-  productTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
-  productTitle: { fontWeight: "800", flex: 1 },
-  stateBadge: { fontSize: 11, fontWeight: "800" },
+  lowStockIdentity: { flex: 1, minWidth: 0 },
+  productTitleRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 8, minWidth: 0 },
+  productTitle: { fontWeight: "800", flex: 1, flexShrink: 1, marginRight: 6 },
+  stateBadge: { fontSize: 11, fontWeight: "800", flexShrink: 0, marginTop: 2 },
   productMeta: { fontSize: 12, marginTop: 3 },
   lowStockDetails: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 14 },
   remaining: { fontWeight: "700" },

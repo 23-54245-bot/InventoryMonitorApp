@@ -152,8 +152,11 @@ function ProductRow({ product, language, onPress }: { product: Product; language
               </View>
             </View>
             <View style={styles.productDetails}>
-              <View style={styles.itemTopRow}><Text style={[styles.itemName, { color: theme.colors.onSurface }]} numberOfLines={1}>{product.name}</Text><Chip style={[styles.statusChip, { backgroundColor: statusBackground(status.tone) }]} textStyle={{ color: statusColor(status.tone) }}>{status.label}</Chip></View>
-              <Text style={[styles.itemMeta, { color: theme.colors.onSurfaceVariant }]} numberOfLines={1}>{product.sku} · {product.category}</Text>
+              <View style={styles.itemTopRow}>
+                <Text style={[styles.itemName, { color: theme.colors.onSurface }]} numberOfLines={2} ellipsizeMode="tail">{product.name}</Text>
+                <Chip compact style={[styles.statusChip, { backgroundColor: statusBackground(status.tone) }]} textStyle={{ color: statusColor(status.tone) }}>{status.label}</Chip>
+              </View>
+              <Text style={[styles.itemMeta, { color: theme.colors.onSurfaceVariant }]} numberOfLines={1} ellipsizeMode="tail">{product.sku} · {product.category}</Text>
               <View style={styles.stockRow}><ProgressBar progress={progress} color={statusColor(status.tone)} style={styles.progress} /><Text style={[styles.stockText, { color: theme.colors.onSurface }]}>{product.currentStock}/{product.maxStock} {product.unitType}</Text></View>
             </View>
             <MaterialCommunityIcons name="chevron-right" size={22} color={theme.colors.onSurfaceVariant} />
@@ -195,12 +198,12 @@ const styles = StyleSheet.create({
   iconBubble: { width: 56, height: 56, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   icon: { fontSize: 22 },
   productDetails: { flex: 1, minWidth: 0 },
-  itemTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
-  itemName: { fontWeight: "800", flex: 1 },
+  itemTopRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 8, minWidth: 0 },
+  itemName: { fontWeight: "800", flex: 1, flexShrink: 1, marginRight: 4 },
   itemMeta: { marginTop: 2, marginBottom: 9 },
   stockRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   progress: { height: 8, borderRadius: 999, flex: 1 },
-  stockText: { fontSize: 12, minWidth: 95 },
-  statusChip: { borderRadius: 12 },
+  stockText: { fontSize: 12, minWidth: 95, flexShrink: 0 },
+  statusChip: { borderRadius: 12, flexShrink: 0, alignSelf: "flex-start" },
   empty: { textAlign: "center", marginTop: 24 },
 });

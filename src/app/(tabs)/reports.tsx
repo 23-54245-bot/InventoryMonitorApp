@@ -133,7 +133,7 @@ export default function ReportsScreen() {
               <Text style={[styles.cardTitle, { color: theme.colors.onSurface }]}>Inventory Value by Product</Text>
               {sortedProducts.slice(0, 7).map((product) => {
                 const value = product.currentStock * product.unitPrice;
-                return <TouchableRipple key={product.id} onPress={() => router.push({ pathname: "/product/[id]", params: { id: product.id } } as any)} style={styles.productValueRow}><View style={styles.productValueContent}><Text style={styles.productEmoji}>{product.icon}</Text><View style={{ flex: 1 }}><View style={styles.valueHeader}><Text style={[styles.productValueName, { color: theme.colors.onSurface }]}>{product.name}</Text><Text style={[styles.valueText, { color: theme.colors.primary }]}>{getCurrency(value)}</Text></View><ProgressBar progress={value / maxInventoryValue} color={theme.colors.primary} style={styles.valueProgress} /></View></View></TouchableRipple>;
+                return <TouchableRipple key={product.id} onPress={() => router.push({ pathname: "/product/[id]", params: { id: product.id } } as any)} style={styles.productValueRow}><View style={styles.productValueContent}><Text style={styles.productEmoji}>{product.icon}</Text><View style={{ flex: 1, minWidth: 0 }}><View style={styles.valueHeader}><Text numberOfLines={1} ellipsizeMode="tail" style={[styles.productValueName, { color: theme.colors.onSurface }]}>{product.name}</Text><Text style={[styles.valueText, { color: theme.colors.primary }]}>{getCurrency(value)}</Text></View><ProgressBar progress={value / maxInventoryValue} color={theme.colors.primary} style={styles.valueProgress} /></View></View></TouchableRipple>;
               })}
             </Card.Content>
           </Card>
@@ -156,7 +156,7 @@ export default function ReportsScreen() {
               <SummaryRow label="Cost" value={getCurrency(profitCost)} theme={theme} />
               <SummaryRow label="Gross Profit" value={getCurrency(profitRevenue - profitCost)} theme={theme} last />
               <Text style={[styles.smallText, { color: theme.colors.onSurfaceVariant }]}>Only stock-outs categorized as Sale are included.</Text>
-              {saleRows.map((row) => <View key={row.id} style={[styles.profitRow, { borderBottomColor: theme.colors.outline }]}><Text style={{ color: theme.colors.onSurface }}>{row.name} · {row.quantity} units</Text><Text style={[styles.valueText, { color: theme.colors.secondary }]}>{getCurrency(row.revenue - row.cost)}</Text></View>)}
+              {saleRows.map((row) => <View key={row.id} style={[styles.profitRow, { borderBottomColor: theme.colors.outline }]}><Text numberOfLines={1} ellipsizeMode="tail" style={{ flex: 1, minWidth: 0, marginRight: 8, color: theme.colors.onSurface }}>{row.name} · {row.quantity} units</Text><Text style={[styles.valueText, { color: theme.colors.secondary, flexShrink: 0 }]}>{getCurrency(row.revenue - row.cost)}</Text></View>)}
             </Card.Content>
           </Card>
           </>
@@ -239,13 +239,13 @@ const styles = StyleSheet.create({
   productValueRow: { paddingVertical: 7 },
   productValueContent: { flexDirection: "row", alignItems: "center", gap: 10 },
   productEmoji: { width: 28, fontSize: 20, textAlign: "center" },
-  valueHeader: { flexDirection: "row", justifyContent: "space-between", gap: 8 },
-  productValueName: { flex: 1, fontSize: 12 },
-  valueText: { fontSize: 12, fontWeight: "800" },
+  valueHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, minWidth: 0 },
+  productValueName: { flex: 1, fontSize: 12, flexShrink: 1, marginRight: 4 },
+  valueText: { fontSize: 12, fontWeight: "800", flexShrink: 0 },
   valueProgress: { height: 6, borderRadius: 5, marginTop: 5 },
   summaryRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 10 },
   summaryValue: { fontWeight: "800" },
-  profitRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 10, borderBottomWidth: 1 },
+  profitRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 10, borderBottomWidth: 1, minWidth: 0 },
   quickLink: { paddingVertical: 12 },
   quickLinkContent: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   exportRow: { flexDirection: "row", gap: 10, flexWrap: "wrap", marginBottom: 10 },

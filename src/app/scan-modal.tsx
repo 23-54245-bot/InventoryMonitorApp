@@ -115,7 +115,7 @@ export default function ScanModal() {
             <Card style={[styles.resultCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}> 
               <Card.Content>
                 <Text style={[styles.resultLabel, { color: theme.colors.primary }]}>Last scan</Text>
-                <Title style={[styles.resultTitle, { color: theme.colors.onSurface }]}>{matchedProduct?.name ?? scanValue}</Title>
+                <Title style={[styles.resultTitle, { color: theme.colors.onSurface }]} numberOfLines={2} ellipsizeMode="tail">{matchedProduct?.name ?? scanValue}</Title>
                 <Text style={[styles.resultText, { color: theme.colors.onSurfaceVariant }]}>{matchedProduct ? `${matchedProduct.sku} · ${matchedProduct.category}` : "No matching product found."}</Text>
                 {matchedProduct ? <Button mode="contained" buttonColor={theme.colors.primary} onPress={() => router.push({ pathname: "/product/[id]", params: { id: matchedProduct.id } } as any)}>{translate(language, "viewProductButton")}</Button> : null}
               </Card.Content>

@@ -394,19 +394,21 @@ export default function PosScreen() {
                 ) : null}
               </View>
 
-              <Text numberOfLines={2} style={[styles.productName, { color: theme.colors.onSurface }]}>
+              <Text numberOfLines={2} ellipsizeMode="tail" style={[styles.productName, { color: theme.colors.onSurface }]}>
                 {item.name}
               </Text>
 
               <View style={styles.priceStockRow}>
-                <Text style={[styles.productPrice, { color: theme.colors.primary }]}>
+                <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.productPrice, { color: theme.colors.primary }]}>
                   {getCurrency(sellingPrice)}
                 </Text>
                 <Text
+                  numberOfLines={1}
                   style={[
                     styles.stockBadge,
                     {
                       color: isOut ? theme.colors.error : isLow ? theme.colors.tertiary : theme.colors.onSurfaceVariant,
+                      flexShrink: 0,
                     },
                   ]}
                 >
@@ -484,11 +486,11 @@ export default function PosScreen() {
               style={styles.cartList}
               renderItem={({ item }) => (
                 <View style={styles.cartItemRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.cartItemName, { color: theme.colors.onSurface }]}>
+                  <View style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
+                    <Text numberOfLines={2} ellipsizeMode="tail" style={[styles.cartItemName, { color: theme.colors.onSurface }]}>
                       {item.product.name}
                     </Text>
-                    <Text style={{ fontSize: 12, color: theme.colors.onSurfaceVariant }}>
+                    <Text numberOfLines={1} ellipsizeMode="tail" style={{ fontSize: 12, color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
                       {getCurrency(item.price)} each · {item.product.sku}
                     </Text>
                   </View>
@@ -740,13 +742,13 @@ export default function PosScreen() {
             <ScrollView style={{ maxHeight: 220 }}>
               {completedSale?.items.map((i, idx) => (
                 <View key={idx} style={styles.receiptLineItem}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontWeight: "600", color: theme.colors.onSurface }}>{i.productName}</Text>
+                  <View style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
+                    <Text numberOfLines={2} ellipsizeMode="tail" style={{ fontWeight: "600", color: theme.colors.onSurface }}>{i.productName}</Text>
                     <Text style={{ fontSize: 11, color: theme.colors.onSurfaceVariant }}>
                       {i.quantity} x {getCurrency(i.unitPrice)}
                     </Text>
                   </View>
-                  <Text style={{ fontWeight: "700", color: theme.colors.onSurface }}>
+                  <Text style={{ fontWeight: "700", color: theme.colors.onSurface, flexShrink: 0 }}>
                     {getCurrency(i.totalPrice)}
                   </Text>
                 </View>
@@ -869,15 +871,17 @@ const styles = StyleSheet.create({
   },
   productIcon: { fontSize: 32 },
   cartBadge: { position: "absolute", top: 0, right: 0 },
-  productName: { fontWeight: "700", fontSize: 13, marginTop: 6, minHeight: 34 },
+  productName: { fontWeight: "700", fontSize: 13, marginTop: 6, minHeight: 34, flexShrink: 1 },
   priceStockRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginTop: 6,
+    gap: 4,
+    minWidth: 0,
   },
-  productPrice: { fontWeight: "800", fontSize: 14 },
-  stockBadge: { fontSize: 11 },
+  productPrice: { fontWeight: "800", fontSize: 14, flexShrink: 1 },
+  stockBadge: { fontSize: 11, flexShrink: 0 },
   emptyContainer: { alignItems: "center", justifyContent: "center", paddingVertical: 60 },
   emptyText: { marginTop: 12, fontSize: 15 },
   cartBar: {
@@ -924,11 +928,12 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: "#00000015",
+    minWidth: 0,
   },
-  cartItemName: { fontWeight: "700", fontSize: 14 },
-  stepperWrap: { flexDirection: "row", alignItems: "center" },
+  cartItemName: { fontWeight: "700", fontSize: 14, flexShrink: 1 },
+  stepperWrap: { flexDirection: "row", alignItems: "center", flexShrink: 0 },
   stepperQty: { fontWeight: "700", fontSize: 14, minWidth: 20, textAlign: "center" },
-  cartItemLineTotal: { fontWeight: "700", fontSize: 14, minWidth: 60, textAlign: "right" },
+  cartItemLineTotal: { fontWeight: "700", fontSize: 14, minWidth: 55, textAlign: "right", flexShrink: 0 },
   cartSummaryBox: { paddingHorizontal: 16, paddingTop: 12 },
   summaryLine: {
     flexDirection: "row",
@@ -981,7 +986,9 @@ const styles = StyleSheet.create({
   receiptLineItem: {
     flexDirection: "row",
     justifyContent: "space-between",
+    alignItems: "center",
     paddingVertical: 4,
+    minWidth: 0,
   },
   receiptTotals: { marginVertical: 8 },
   receiptActions: { flexDirection: "row", gap: 8, marginTop: 16 },

@@ -292,6 +292,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
     lineHeight: 24,
+    flexShrink: 1,
   },
   productCategory: {
     fontSize: 12,

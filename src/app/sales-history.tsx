@@ -227,10 +227,10 @@ export default function SalesHistoryScreen() {
 
                     {item.items.map((prod, idx) => (
                       <View key={idx} style={styles.itemLine}>
-                        <Text style={{ flex: 1, fontSize: 13, color: theme.colors.onSurface }}>
+                        <Text numberOfLines={2} ellipsizeMode="tail" style={{ flex: 1, minWidth: 0, marginRight: 8, fontSize: 13, color: theme.colors.onSurface }}>
                           {prod.productName} <Text style={{ color: theme.colors.onSurfaceVariant }}>x{prod.quantity}</Text>
                         </Text>
-                        <Text style={{ fontWeight: "600", fontSize: 13, color: theme.colors.onSurface }}>
+                        <Text style={{ fontWeight: "600", fontSize: 13, color: theme.colors.onSurface, flexShrink: 0 }}>
                           {getCurrency(prod.totalPrice)}
                         </Text>
                       </View>
@@ -327,6 +327,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     paddingVertical: 3,
+    minWidth: 0,
   },
   emptyWrap: {
     alignItems: "center",
