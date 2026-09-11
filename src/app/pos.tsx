@@ -841,7 +841,7 @@ export default function PosScreen() {
                         ) : null}
                         {!qrUri && !accNumber ? (
                           <Text style={{ fontSize: 12, color: theme.colors.onSurfaceVariant, textAlign: "center", fontStyle: "italic", paddingHorizontal: 12 }}>
-                            No {isGcash ? "GCash" : "Maya"} QR uploaded yet. Go to Profile &gt; Store to configure. You can still accept payment and enter the reference number below.
+                            No {isGcash ? "GCash" : "Maya"} QR uploaded yet. Go to Profile {">"} Store to configure. You can still accept payment and enter the reference number below.
                           </Text>
                         ) : null}
                       </View>
@@ -1383,6 +1383,7 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
   },
   paymentMethodCard: {
+    flex: 1,
     width: "30%",
     alignItems: "center",
     padding: 10,
