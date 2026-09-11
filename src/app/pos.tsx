@@ -74,6 +74,7 @@ export default function PosScreen() {
   });
   const [splitCashStr, setSplitCashStr] = useState("");
   const [splitOtherMethod, setSplitOtherMethod] = useState<"e_wallet" | "credit">("e_wallet");
+  const [redeemPoints, setRedeemPoints] = useState(0);
 
   // Completed Receipt Dialog state
   const [completedSale, setCompletedSale] = useState<SaleTransaction | null>(null);
@@ -95,7 +96,7 @@ export default function PosScreen() {
   const cartTotalItems = useMemo(() => cart.reduce((sum, item) => sum + item.quantity, 0), [cart]);
   const cartSubtotal = useMemo(() => cart.reduce((sum, item) => sum + item.price * item.quantity, 0), [cart]);
   const discountVal = Number(discountStr) || 0;
-  const cartGrandTotal = Math.max(0, cartSubtotal - discountVal);
+  const cartGrandTotal = Math.max(0, cartSubtotal - discountVal - redeemPoints);
   const amountTenderedVal = Number(amountTenderedStr) || 0;
   const changeDue = Math.max(0, amountTenderedVal - cartGrandTotal);
 
@@ -184,6 +185,11 @@ export default function PosScreen() {
   const openCheckout = () => {
     if (cart.length === 0) return;
     setAmountTenderedStr(String(cartGrandTotal));
+    // Auto-generate a TXN reference for e-wallet payments
+    const now = new Date();
+    const datePart = now.toISOString().slice(0, 10).replace(/-/g, "");
+    const randPart = Math.random().toString(36).slice(2, 6).toUpperCase();
+    setRefNumber(`TXN-${datePart}-${randPart}`);
     setCheckoutVisible(true);
   };
 
@@ -267,10 +273,11 @@ export default function PosScreen() {
         items: cart,
         paymentMethod,
         amountTendered: paymentMethod === "cash" ? amountTenderedVal : cartGrandTotal,
-        discount: discountVal,
-        customerId: (isCredit || isSplitCredit) ? customerIdToUse : undefined,
-        customerName: customerNameToUse || undefined,
-        customerPhone: customerPhoneToUse || undefined,
+        discount: discountVal + redeemPoints,
+        redeemedPoints: redeemPoints,
+        customerId: (isCredit || isSplitCredit) ? customerIdToUse : (selectedCustomerId || undefined),
+        customerName: customerNameToUse || (selectedCustomerId ? customers.find(c => c.id === selectedCustomerId)?.name : undefined),
+        customerPhone: customerPhoneToUse || (selectedCustomerId ? customers.find(c => c.id === selectedCustomerId)?.phone : undefined),
         dueDate: (isCredit || isSplitCredit) ? creditDueDate : undefined,
         referenceNumber: paymentMethod === "e_wallet" || (paymentMethod === "split" && splitOtherMethod === "e_wallet") ? refNumber.trim() || undefined : undefined,
         splitCashAmount: paymentMethod === "split" ? (Number(splitCashStr) || 0) : undefined,
@@ -286,6 +293,7 @@ export default function PosScreen() {
         setNewCustName("");
         setNewCustPhone("");
         setSplitCashStr("");
+        setRedeemPoints(0);
         setCompletedSale(result.sale);
       } else {
         Alert.alert("Checkout Error", result.error ?? "Failed to process sale.");
@@ -754,6 +762,89 @@ export default function PosScreen() {
                 />
               </View>
 
+              {/* Customer Selector / Loyalty Points Redemption */}
+              <View style={[styles.formRow, { backgroundColor: theme.colors.surfaceVariant, padding: 10, borderRadius: 10, marginBottom: 14 }]}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <Text style={[styles.inputLabel, { color: theme.colors.onSurface, fontWeight: "700", marginBottom: 0 }]}>
+                    Customer / Loyalty Points
+                  </Text>
+                  {selectedCustomerId ? (
+                    <Pressable onPress={() => { setSelectedCustomerId(""); setRedeemPoints(0); }}>
+                      <Text style={{ fontSize: 12, color: theme.colors.primary, fontWeight: "600" }}>Clear</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+                  <Chip
+                    selected={selectedCustomerId === ""}
+                    onPress={() => { setSelectedCustomerId(""); setRedeemPoints(0); }}
+                    style={{ marginRight: 6 }}
+                  >
+                    Walk-in Customer
+                  </Chip>
+                  {customers.map((c) => (
+                    <Chip
+                      key={c.id}
+                      selected={selectedCustomerId === c.id}
+                      onPress={() => setSelectedCustomerId(c.id)}
+                      style={{ marginRight: 6 }}
+                    >
+                      {c.name} {c.loyaltyPoints > 0 ? `(⭐${c.loyaltyPoints} pts)` : ""}
+                    </Chip>
+                  ))}
+                </ScrollView>
+
+                {(() => {
+                  const cust = customers.find((c) => c.id === selectedCustomerId);
+                  if (!cust || cust.loyaltyPoints <= 0) return null;
+                  const maxPts = Math.min(cust.loyaltyPoints, Math.floor(cartSubtotal - discountVal));
+                  return (
+                    <View style={{ marginTop: 6, paddingTop: 6, borderTopWidth: 1, borderTopColor: "#00000015" }}>
+                      <Text style={{ fontSize: 12, color: "#d97706", fontWeight: "700", marginBottom: 6 }}>
+                        ⭐ {cust.name} has {cust.loyaltyPoints} points available (1 pt = ₱1 discount)
+                      </Text>
+                      <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+                        <Chip
+                          compact
+                          selected={redeemPoints === 0}
+                          onPress={() => setRedeemPoints(0)}
+                        >
+                          Use 0 pts
+                        </Chip>
+                        {cust.loyaltyPoints >= 20 && maxPts >= 20 ? (
+                          <Chip
+                            compact
+                            selected={redeemPoints === 20}
+                            onPress={() => setRedeemPoints(20)}
+                          >
+                            Use 20 pts (-₱20)
+                          </Chip>
+                        ) : null}
+                        {cust.loyaltyPoints >= 50 && maxPts >= 50 ? (
+                          <Chip
+                            compact
+                            selected={redeemPoints === 50}
+                            onPress={() => setRedeemPoints(50)}
+                          >
+                            Use 50 pts (-₱50)
+                          </Chip>
+                        ) : null}
+                        {maxPts > 0 ? (
+                          <Chip
+                            compact
+                            selected={redeemPoints === maxPts}
+                            onPress={() => setRedeemPoints(maxPts)}
+                          >
+                            Use Max ({maxPts} pts)
+                          </Chip>
+                        ) : null}
+                      </View>
+                    </View>
+                  );
+                })()}
+              </View>
+
               {/* Amount Tendered (for cash) */}
               {paymentMethod === "cash" ? (
                 <View style={styles.formRow}>
@@ -776,7 +867,7 @@ export default function PosScreen() {
                     >
                       {translate(language, "exact")}
                     </Chip>
-                    {[100, 200, 500, 1000].map((preset) => (
+                    {[20, 50, 100, 200, 500, 1000].map((preset) => (
                       <Chip
                         key={preset}
                         compact
@@ -1095,6 +1186,12 @@ export default function PosScreen() {
                   <View style={styles.summaryLine}>
                     <Text style={{ color: theme.colors.error }}>{translate(language, "discountLabel")}</Text>
                     <Text style={{ color: theme.colors.error }}>-{getCurrency(discountVal)}</Text>
+                  </View>
+                ) : null}
+                {redeemPoints > 0 ? (
+                  <View style={styles.summaryLine}>
+                    <Text style={{ color: "#d97706", fontWeight: "600" }}>⭐ Points Discount</Text>
+                    <Text style={{ color: "#d97706", fontWeight: "700" }}>-{getCurrency(redeemPoints)}</Text>
                   </View>
                 ) : null}
                 <View style={styles.summaryLine}>

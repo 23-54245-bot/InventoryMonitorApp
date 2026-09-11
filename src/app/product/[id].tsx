@@ -2,10 +2,11 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect } from "react";
-import { ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
 import { Button, Chip, Text, useTheme } from "react-native-paper";
 import Animated, { FadeInUp, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 
+import { useAuth } from "../../context/auth";
 import { useStore } from "../../context/store";
 import { getCurrency, getExpiryStatus, getProductStatus } from "../../data/freshmart";
 
@@ -43,6 +44,7 @@ export default function ProductDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id?: string }>();
   const theme = useTheme();
+  const { session } = useAuth();
   const { getProduct, deleteProduct } = useStore();
   const product = params.id ? getProduct(String(params.id)) : undefined;
 
@@ -79,6 +81,10 @@ export default function ProductDetailScreen() {
   const closeProduct = () => (router.canGoBack() ? router.back() : router.replace("/(tabs)/inventory" as any));
 
   const removeProduct = () => {
+    if (session?.role === "Staff") {
+      Alert.alert("Permission Denied", "Staff members cannot delete products. Only Store Owner or Manager can perform this action.");
+      return;
+    }
     deleteProduct(product.id);
     closeProduct();
   };

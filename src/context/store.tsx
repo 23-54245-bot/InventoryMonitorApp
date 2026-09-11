@@ -6,7 +6,6 @@ import {
     CartItem,
     Customer,
     Debt,
-    DebtPayment,
     findProductBySku,
     FreshMartState,
     getCategoryBreakdown,
@@ -21,7 +20,7 @@ import {
     SaleTransaction,
     StockMovement,
     StorePaymentQRs,
-    TeamMember,
+    TeamMember
 } from "../data/freshmart";
 import { readStoredString, writeStoredString } from "../lib/storage";
 import { supabase } from "../lib/supabase";
@@ -77,6 +76,7 @@ type StoreContextValue = {
     splitCashAmount?: number;
     splitOtherAmount?: number;
     splitOtherMethod?: "e_wallet" | "credit";
+    redeemedPoints?: number;
   }) => Promise<{ success: boolean; sale?: SaleTransaction; error?: string }>;
   loadSales: () => Promise<void>;
   getProduct: (id: string) => Product | undefined;
@@ -429,6 +429,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     splitCashAmount?: number;
     splitOtherAmount?: number;
     splitOtherMethod?: "e_wallet" | "credit";
+    redeemedPoints?: number;
   }): Promise<{ success: boolean; sale?: SaleTransaction; error?: string }> => {
     const {
       items,
@@ -445,6 +446,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       splitCashAmount,
       splitOtherAmount,
       splitOtherMethod,
+      redeemedPoints = 0,
     } = checkoutData;
 
     if (!items || items.length === 0) {
@@ -601,15 +603,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // Customer Loyalty Points: 1 pt per ₱100 paid non-credit
+    // Customer Loyalty Points: 1 pt per ₱100 paid non-credit, minus redeemedPoints
     if (customerId) {
       const paidPortion = isCredit ? 0 : isSplitCredit ? (splitCashAmount ?? 0) : totalAmount;
-      const pts = Math.floor(paidPortion / 100);
-      if (pts > 0) {
+      const earnedPts = Math.floor(paidPortion / 100);
+      const pointsDelta = earnedPts - (redeemedPoints ?? 0);
+      if (pointsDelta !== 0) {
         setCustomers((prev) =>
           prev.map((c) =>
             c.id === customerId
-              ? { ...c, loyaltyPoints: c.loyaltyPoints + pts, updatedAt: timestamp }
+              ? { ...c, loyaltyPoints: Math.max(0, c.loyaltyPoints + pointsDelta), updatedAt: timestamp }
               : c
           )
         );
@@ -619,7 +622,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (cust) {
             void upsertCustomer(storeId, {
               ...cust,
-              loyaltyPoints: cust.loyaltyPoints + pts,
+              loyaltyPoints: Math.max(0, cust.loyaltyPoints + pointsDelta),
             });
           }
         }

@@ -4,40 +4,36 @@ import { useRouter } from "expo-router";
 import * as Sharing from "expo-sharing";
 import { useMemo, useState } from "react";
 import {
-  Alert,
-  FlatList,
-  KeyboardAvoidingView,
-  Linking,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  Share,
-  StyleSheet,
-  TextInput,
-  View,
+    Alert,
+    FlatList,
+    KeyboardAvoidingView,
+    Linking,
+    Modal,
+    Platform,
+    ScrollView,
+    Share,
+    StyleSheet,
+    TextInput,
+    View
 } from "react-native";
 import {
-  Appbar,
-  Badge,
-  Button,
-  Card,
-  Chip,
-  Divider,
-  IconButton,
-  Menu,
-  Surface,
-  Text,
-  useTheme,
+    Appbar,
+    Button,
+    Chip,
+    Divider,
+    IconButton,
+    Surface,
+    Text,
+    useTheme
 } from "react-native-paper";
 
+import { useAuth } from "../context/auth";
 import { useStore } from "../context/store";
 import {
-  getCurrency,
-  type Customer,
-  type CustomerRiskStatus,
-  type Debt,
-  type DebtPayment,
+    getCurrency,
+    type Customer,
+    type CustomerRiskStatus,
+    type Debt
 } from "../data/freshmart";
 import { translate } from "../lib/i18n";
 
@@ -46,6 +42,7 @@ type FilterTab = "all" | "unpaid" | "overdue" | "settled" | "customers";
 export default function UtangScreen() {
   const router = useRouter();
   const theme = useTheme();
+  const { session } = useAuth();
   const { state, debts, customers, addCustomer, updateCustomer, addDebt, recordDebtPayment } = useStore();
   const language = state.user.preferences?.language ?? "English";
 
@@ -289,6 +286,10 @@ export default function UtangScreen() {
 
   // Open customer edit
   const handleOpenCustomerEdit = (cust: Customer) => {
+    if (session?.role === "Staff") {
+      Alert.alert("Permission Denied", "Staff members cannot edit customer credit limits or credit standings. Only Store Owner or Manager can perform this action.");
+      return;
+    }
     setSelectedCustomer(cust);
     setEditLimitStr(String(cust.creditLimit));
     setEditRiskStatus(cust.riskStatus);

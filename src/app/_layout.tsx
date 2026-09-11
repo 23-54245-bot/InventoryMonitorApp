@@ -39,18 +39,18 @@ function AppShell() {
 
   return (
     <PaperProvider theme={theme}>
-      <Stack screenOptions={{ headerShown: false }}>
+      <Stack screenOptions={{ headerShown: false, animation: "slide_from_right" }}>
         <Stack.Screen name="login" />
         <Stack.Screen name="auth/callback" />
-        <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="scan-modal" options={{ presentation: "modal" }} />
-        <Stack.Screen name="product/[id]" options={{ presentation: "modal" }} />
-        <Stack.Screen name="add-product" options={{ presentation: "modal" }} />
-        <Stack.Screen name="stock-movement" options={{ presentation: "modal" }} />
-        <Stack.Screen name="change-password" options={{ presentation: "modal" }} />
-        <Stack.Screen name="pos" options={{ presentation: "modal" }} />
-        <Stack.Screen name="sales-history" options={{ presentation: "modal" }} />
-        <Stack.Screen name="utang" options={{ presentation: "modal" }} />
+        <Stack.Screen name="(tabs)" options={{ animation: "fade" }} />
+        <Stack.Screen name="scan-modal" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+        <Stack.Screen name="product/[id]" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+        <Stack.Screen name="add-product" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+        <Stack.Screen name="stock-movement" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+        <Stack.Screen name="change-password" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+        <Stack.Screen name="pos" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+        <Stack.Screen name="sales-history" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+        <Stack.Screen name="utang" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
       </Stack>
       <Snackbar
         visible={updateAvailable}
