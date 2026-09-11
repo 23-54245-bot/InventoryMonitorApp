@@ -16,6 +16,32 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
    npx expo start
    ```
 
+## Supabase backend
+
+The backend schema is in `supabase/schema.sql` and the Expo client is in `src/lib/supabase.ts`.
+
+1. Create a Supabase project.
+2. Run `supabase/schema.sql` in the Supabase SQL Editor.
+3. Copy `.env.example` to `.env.local`.
+4. Add the project URL and anon key to `.env.local`.
+5. Restart Expo with `npx expo start --clear`.
+
+The schema enables row-level security for stores, profiles, products, stock movements, and notifications. Never put a Supabase service-role key in the Expo app.
+
+### Google login
+
+In Supabase, open **Authentication > Providers > Google**, enable it, and add the Google OAuth Client ID and Client Secret. Add the Supabase callback URL shown by Supabase to the Google OAuth client's authorized redirect URIs:
+
+`https://icbrcvcjqckfmzkzasse.supabase.co/auth/v1/callback`
+
+The login screen now includes **Continue with Google**. Use an EAS development or preview build for native OAuth callbacks; Expo Go is not supported for this custom redirect flow.
+
+For the VS Code web preview, add the callback URL under Supabase **Authentication > URL Configuration > Redirect URLs**, for example `http://localhost:8093/auth/callback`. Add each localhost port you use during development.
+
+Self-created accounts receive the `Admin` role. Accounts invited by an Admin receive the invited role. After changing this policy, run the updated `supabase/schema.sql` in the Supabase SQL Editor; existing profile roles are unchanged.
+
+Each account owns a separate store. The schema migration also assigns existing profiles without a store to their own store so their team and inventory data remain isolated.
+
 In the output, you'll find options to open the app in a
 
 - [development build](https://docs.expo.dev/develop/development-builds/introduction/)

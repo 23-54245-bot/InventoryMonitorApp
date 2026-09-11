@@ -1,14 +1,17 @@
 /**
- * Learn more about light and dark modes:
- * https://docs.expo.dev/guides/color-schemes/
+ * This hook returns the current app theme colors based on React Native Paper theme.
  */
 
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useTheme as usePaperTheme } from 'react-native-paper';
 
 export function useTheme() {
-  const scheme = useColorScheme();
-  const theme = scheme === 'unspecified' ? 'light' : scheme;
+  const theme = usePaperTheme();
 
-  return Colors[theme];
+  return {
+    text: theme.colors.onSurface,
+    background: theme.colors.background,
+    backgroundElement: theme.colors.surface,
+    backgroundSelected: theme.colors.surfaceVariant,
+    textSecondary: theme.colors.onSurfaceVariant,
+  };
 }

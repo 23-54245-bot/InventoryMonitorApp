@@ -1,187 +1,206 @@
-import { Camera } from "expo-camera";
-import { useEffect, useRef, useState } from "react";
-import { FlatList, Platform, StyleSheet, TouchableOpacity, View } from "react-native";
-import { Card, Chip, IconButton, ProgressBar, Searchbar, Text, Title } from "react-native-paper";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Image } from "expo-image";
+import { useRouter } from "expo-router";
+import { useMemo, useState } from "react";
+import { FlatList, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Appbar, Chip, IconButton, ProgressBar, Searchbar, Text, useTheme } from "react-native-paper";
+import Animated, { FadeInUp } from "react-native-reanimated";
 
-const products = [
-  { name: "Jasmine Rice", sku: "RIC-001", category: "Grains", stock: 45, capacity: 200 },
-  { name: "Cooking Oil", sku: "OIL-002", category: "Oils", stock: 8, capacity: 100 },
-  { name: "Fresh Milk", sku: "MLK-003", category: "Dairy", stock: 22, capacity: 60 },
-  { name: "Hand Soap", sku: "SOAP-004", category: "Cleaning", stock: 12, capacity: 50 },
-];
+import { useStore } from "../../context/store";
+import { getProductStatus, Product } from "../../data/freshmart";
+import { translate } from "../../lib/i18n";
 
-export default function Inventory() {
-  const [query, setQuery] = useState("");
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
-  const [scanning, setScanning] = useState(false);
-  const [scannedProduct, setScannedProduct] = useState<string | null>(null);
-  const cameraRef = useRef<any>(null);
-  const cameraExport: any = Camera as any;
-  const potentialCamera = cameraExport?.default ?? cameraExport?.Camera ?? cameraExport;
-  const CameraComponent: any = typeof potentialCamera === "function" ? potentialCamera : null;
-  const cameraType = (cameraExport?.Constants?.Type?.back ?? Camera?.Constants?.Type?.back) ?? "back";
-  const barcodeTypes = cameraExport?.Constants?.BarCodeType
-    ? [
-        cameraExport.Constants.BarCodeType.qr,
-        cameraExport.Constants.BarCodeType.ean13,
-        cameraExport.Constants.BarCodeType.ean8,
-        cameraExport.Constants.BarCodeType.code128,
-        cameraExport.Constants.BarCodeType.code39,
-      ]
-    : undefined;
+const categories = ["All", "Grains & Rice", "Oil & Condiments", "Dairy", "Instant Foods", "Sugar & Sweeteners", "Canned Goods", "Snacks", "Beverages", "Frozen Goods", "Personal Care"];
 
-  useEffect(() => {
-    (async () => {
-      const requestFn = cameraExport?.requestCameraPermissionsAsync ?? Camera?.requestCameraPermissionsAsync;
-      if (requestFn) {
-        try {
-          const { status } = await requestFn();
-          setHasPermission(status === "granted");
-        } catch (e) {
-          setHasPermission(false);
-        }
-      } else {
-        setHasPermission(false);
-      }
-    })();
-  }, []);
+export default function InventoryScreen() {
+  const router = useRouter();
+  const { state } = useStore();
+  const theme = useTheme();
+  const [activeCategory, setActiveCategory] = useState("All");
+  const [searchQuery, setSearchQuery] = useState("");
 
-  const filteredProducts = products.filter((item) =>
-    item.name.toLowerCase().includes(query.toLowerCase()) ||
-    item.sku.toLowerCase().includes(query.toLowerCase()) ||
-    item.category.toLowerCase().includes(query.toLowerCase())
-  );
+  const language = state.user.preferences?.language ?? "English";
 
-  const handleBarCodeScanned = ({ data }: { data: string }) => {
-    setScanning(false);
-    setScannedProduct(data);
-    setQuery(data);
-  };
+  const filteredProducts = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return (state.products || [])
+      .filter((product) => {
+        if (!product) return false;
+        const prodName = product.name || "";
+        const prodSku = product.sku || "";
+        const matchesCategory = activeCategory === "All" || product.category === activeCategory;
+        const matchesQuery = !query || prodName.toLowerCase().includes(query) || prodSku.toLowerCase().includes(query);
+        return matchesCategory && matchesQuery;
+      })
+      .sort((left, right) => (left.name || "").localeCompare(right.name || ""));
+  }, [activeCategory, searchQuery, state.products]);
+
+  const statusBackground = (tone: string) =>
+    tone === "healthy"
+      ? `${theme.colors.secondary}22`
+      : tone === "warning"
+      ? `${theme.colors.tertiary}22`
+      : `${theme.colors.error}22`;
+
+  const statusColor = (tone: string) =>
+    tone === "healthy"
+      ? theme.colors.secondary
+      : tone === "warning"
+      ? theme.colors.tertiary
+      : theme.colors.error;
 
   return (
-    <View style={styles.container}>
-      <View style={styles.headerRow}>
-        <Title style={styles.title}>Inventory</Title>
-        <IconButton
-          icon="barcode-scan"
-          size={28}
-          onPress={() => setScanning((prev) => !prev)}
-          accessibilityLabel="Scan barcode"
+    <View style={[styles.page, { backgroundColor: theme.colors.background }]}>
+      <Appbar.Header style={[styles.header, { backgroundColor: theme.colors.primary }]}>
+        <Appbar.Content
+          title={translate(language, "inventoryTitle")}
+          titleStyle={[styles.headerTitle, { color: theme.colors.onPrimary }]}
         />
-      </View>
-      <Searchbar
-        placeholder="Search by name, SKU or category"
-        value={query}
-        onChangeText={(text) => {
-          setQuery(text);
-          if (scannedProduct) setScannedProduct(null);
-        }}
-        style={styles.search}
-      />
+        <IconButton icon="cash-register" iconColor={theme.colors.onPrimary} onPress={() => router.push("/pos" as any)} />
+        <IconButton icon="barcode-scan" iconColor={theme.colors.onPrimary} onPress={() => router.push("/scan-modal" as any)} />
+        <IconButton icon="plus" iconColor={theme.colors.onPrimary} onPress={() => router.push("/add-product" as any)} />
+      </Appbar.Header>
 
-      {hasPermission === null ? (
-        <Text style={styles.permissionText}>Checking camera permissions...</Text>
-      ) : hasPermission === false ? (
-        <Text style={styles.permissionText}>Camera permission is required for barcode scanning.</Text>
-      ) : null}
+      <View style={[styles.body, { backgroundColor: theme.colors.surface }]}> 
+        <Searchbar
+          placeholder={translate(language, "searchPlaceholder")}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          style={styles.searchBar}
+          inputStyle={styles.searchInput}
+        />
 
-      {scanning ? (
-        hasPermission === true ? (
-        <View style={styles.scannerContainer}>
-          {Platform.OS === "web" ? (
-            <View style={[styles.scanner, { justifyContent: "center", alignItems: "center" }]}> 
-              <Text>Barcode scanning is not available on web. Use a device or simulator with camera support.</Text>
-            </View>
-          ) : CameraComponent ? (
-            <CameraComponent
-              ref={(ref: any) => {
-                cameraRef.current = ref;
-              }}
-              onBarCodeScanned={handleBarCodeScanned}
-              style={styles.scanner}
-              type={cameraType}
-              barCodeScannerSettings={
-                barcodeTypes ? { barCodeTypes: barcodeTypes } : undefined
-              }
-            />
-          ) : (
-            <View style={[styles.scanner, { justifyContent: "center", alignItems: "center" }]}> 
-              <Text>Camera component unavailable on this platform.</Text>
-            </View>
-          )}
-          <Chip style={styles.scannerChip} textStyle={styles.scannerChipText}>
-            Scanning... point camera at barcode
-          </Chip>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterScroll}
+          contentContainerStyle={styles.filterRow}
+        >
+          {categories.map((category) => (
+            <Chip
+              key={category}
+              mode="outlined"
+              compact
+              selected={activeCategory === category}
+              onPress={() => setActiveCategory(category)}
+              style={[styles.chip, activeCategory === category ? styles.activeChip : styles.inactiveChip]}
+              textStyle={activeCategory === category ? styles.activeChipText : styles.inactiveChipText}
+            >
+              {category === "All" ? translate(language, "allFilter") : category}
+            </Chip>
+          ))}
+        </ScrollView>
+
+        <View style={[styles.resultBar, { backgroundColor: theme.colors.secondaryContainer }]}>
+          <Text style={[styles.summaryText, { color: theme.colors.onSecondaryContainer }]}>{filteredProducts.length} {translate(language, "productsFound")}</Text>
+          <Text style={[styles.stockSummary, { color: theme.colors.onSecondaryContainer }]}>{translate(language, "totalStock")}: {state.products.reduce((total, product) => total + product.currentStock, 0)} {translate(language, "units")}</Text>
         </View>
-      ) : (
-          <Text style={styles.permissionText}>Request camera access to scan barcodes.</Text>
-        )
-      ) : null}
 
-      {scannedProduct ? (
-        <Card style={styles.scannedCard}>
-          <Card.Content>
-            <Text style={styles.scanResultLabel}>Scanned SKU</Text>
-            <Text style={styles.scanResult}>{scannedProduct}</Text>
-            <Chip style={styles.scanChip}>Showing matching product</Chip>
-          </Card.Content>
-        </Card>
-      ) : null}
-
-      <FlatList
-        data={filteredProducts}
-        keyExtractor={(item) => item.sku}
-        contentContainerStyle={styles.list}
-        renderItem={({ item }) => {
-          const fill = item.stock / item.capacity;
-          const status = item.stock <= 10 ? "Low" : item.stock <= 30 ? "Warning" : "Healthy";
-          return (
-            <TouchableOpacity activeOpacity={0.8}>
-              <Card style={styles.card}>
-                <Card.Content>
-                  <View style={styles.cardHeader}>
-                    <View>
-                      <Text style={styles.name}>{item.name}</Text>
-                      <Text style={styles.sku}>{item.sku} · {item.category}</Text>
-                    </View>
-                    <Chip style={status === "Low" ? styles.chipLow : status === "Warning" ? styles.chipWarning : styles.chipHealthy}>
-                      {status}
-                    </Chip>
-                  </View>
-                  <ProgressBar progress={fill} color={status === "Low" ? "#dc2626" : status === "Warning" ? "#f59e0b" : "#16a34a"} style={styles.progress} />
-                  <Text style={styles.quantity}>{item.stock} of {item.capacity} units</Text>
-                </Card.Content>
-              </Card>
-            </TouchableOpacity>
-          );
-        }}
-      />
+        <Animated.View entering={FadeInUp.duration(300)} style={styles.productList}>
+        <FlatList
+          data={filteredProducts}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{ paddingBottom: 28 }}
+          renderItem={({ item }) => (
+            <ProductRow
+              product={item}
+              language={language}
+              onPress={() => router.push({ pathname: "/product/[id]", params: { id: item.id } } as any)}
+            />
+          )}
+          ListEmptyComponent={<Text style={styles.empty}>{translate(language, "noInventoryItems")}</Text>}
+        />
+        </Animated.View>
+      </View>
     </View>
   );
 }
 
+function ProductRow({ product, language, onPress }: { product: Product; language: string; onPress: () => void }) {
+  const theme = useTheme();
+  const status = getProductStatus(product);
+  const progress = product.maxStock ? Math.min(product.currentStock / product.maxStock, 1) : 0;
+
+  const statusBackground = (tone: string) =>
+    tone === "healthy"
+      ? `${theme.colors.secondary}22`
+      : tone === "warning"
+      ? `${theme.colors.tertiary}22`
+      : `${theme.colors.error}22`;
+
+  const statusColor = (tone: string) =>
+    tone === "healthy"
+      ? theme.colors.secondary
+      : tone === "warning"
+      ? theme.colors.tertiary
+      : theme.colors.error;
+
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.cardWrap, pressed && styles.cardPressed]}>
+      <View style={[styles.card, { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.outline }]}> 
+        <View style={styles.cardContent}>
+          <View style={styles.cardHeader}>
+            <View style={styles.imageColumn}>
+              <View style={styles.imageWrap}>
+              {product.imageUri ? (
+                <Image source={{ uri: product.imageUri }} style={styles.image} contentFit="cover" />
+              ) : (
+                <View style={[styles.iconBubble, { backgroundColor: statusBackground(status.tone) }]}> 
+                  <MaterialCommunityIcons name="package-variant-closed" size={26} color={theme.colors.primary} />
+                </View>
+              )}
+              </View>
+            </View>
+            <View style={styles.productDetails}>
+              <View style={styles.itemTopRow}><Text style={[styles.itemName, { color: theme.colors.onSurface }]} numberOfLines={1}>{product.name}</Text><Chip style={[styles.statusChip, { backgroundColor: statusBackground(status.tone) }]} textStyle={{ color: statusColor(status.tone) }}>{status.label}</Chip></View>
+              <Text style={[styles.itemMeta, { color: theme.colors.onSurfaceVariant }]} numberOfLines={1}>{product.sku} · {product.category}</Text>
+              <View style={styles.stockRow}><ProgressBar progress={progress} color={statusColor(status.tone)} style={styles.progress} /><Text style={[styles.stockText, { color: theme.colors.onSurface }]}>{product.currentStock}/{product.maxStock} {product.unitType}</Text></View>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={22} color={theme.colors.onSurfaceVariant} />
+          </View>
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: "#eef2ff" },
-  headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 16 },
-  title: { fontSize: 28, fontWeight: "700" },
-  search: { marginBottom: 16 },
-  permissionText: { color: "#dc2626", marginBottom: 12, textAlign: "center" },
-  scannerContainer: { height: 240, borderRadius: 16, overflow: "hidden", marginBottom: 14 },
-  scanner: { flex: 1 },
-  scannerChip: { position: "absolute", bottom: 14, alignSelf: "center", backgroundColor: "rgba(15, 23, 42, 0.88)", color: "#ffffff" },
-  scannedCard: { marginBottom: 14, backgroundColor: "#ffffff", elevation: 2 },
-  scanResultLabel: { color: "#6b7280", marginBottom: 4 },
-  scanResult: { fontSize: 18, fontWeight: "700", marginBottom: 8 },
-  scanChip: { alignSelf: "flex-start", backgroundColor: "#e0f2fe" },
-  scannerChipText: { color: "#ffffff" },
-  list: { paddingBottom: 24 },
-  card: { marginBottom: 14, elevation: 2 },
-  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
-  name: { fontSize: 18, fontWeight: "600" },
-  sku: { color: "#6b7280", marginTop: 4 },
-  progress: { height: 10, borderRadius: 6, marginVertical: 10 },
-  quantity: { color: "#4b5563" },
-  chipLow: { backgroundColor: "#fee2e2" },
-  chipWarning: { backgroundColor: "#fef3c7" },
-  chipHealthy: { backgroundColor: "#dcfce7" },
+  page: { flex: 1 },
+  header: {},
+  headerTitle: { fontWeight: "800" },
+  body: { flex: 1, marginTop: -12, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 16 },
+  searchBar: { marginBottom: 12, elevation: 0 },
+  searchInput: { fontSize: 14, minHeight: 0 },
+  summaryBar: { flexDirection: "row", justifyContent: "space-between", padding: 12, borderRadius: 14, marginBottom: 12 },
+  resultBar: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 18, paddingVertical: 12, marginHorizontal: -16, marginBottom: 0 },
+  stockSummary: { fontSize: 12 },
+  summaryText: { fontWeight: "700" },
+  search: { marginBottom: 12 },
+  filterScroll: { flexGrow: 0, height: 52, marginBottom: 12 },
+  filterRow: { flexDirection: "row", paddingBottom: 12, paddingLeft: 4, paddingRight: 4 },
+  productList: { flex: 1, minHeight: 0 },
+  cardPressed: { opacity: 0.85, transform: [{ scale: 0.99 }] },
+  chip: { paddingHorizontal: 10, minHeight: 40, height: 40, marginRight: 8, alignItems: "center", justifyContent: "center" },
+  activeChip: {},
+  inactiveChip: { borderWidth: 1 },
+  activeChipText: {},
+  inactiveChipText: {},
+  cardWrap: { marginBottom: 12 },
+  card: { borderBottomWidth: 1 },
+  cardContent: { paddingVertical: 14, paddingHorizontal: 4 },
+  cardHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
+  imageColumn: { width: 68, alignItems: "center" },
+  imageWrap: { width: 56, height: 56, borderRadius: 18, overflow: "hidden" },
+  image: { width: 56, height: 56, borderRadius: 18 },
+  iconBubble: { width: 56, height: 56, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  icon: { fontSize: 22 },
+  productDetails: { flex: 1, minWidth: 0 },
+  itemTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  itemName: { fontWeight: "800", flex: 1 },
+  itemMeta: { marginTop: 2, marginBottom: 9 },
+  stockRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  progress: { height: 8, borderRadius: 999, flex: 1 },
+  stockText: { fontSize: 12, minWidth: 95 },
+  statusChip: { borderRadius: 12 },
+  empty: { textAlign: "center", marginTop: 24 },
 });
