@@ -259,10 +259,12 @@ create table if not exists public.sales (
   discount numeric not null default 0,
   tax numeric not null default 0,
   total_amount numeric not null default 0,
-  payment_method text not null default 'cash' check (payment_method in ('cash', 'card', 'e_wallet', 'other')),
+  payment_method text not null default 'cash' check (payment_method in ('cash', 'card', 'e_wallet', 'credit', 'split', 'other')),
   amount_tendered numeric not null default 0,
   change_amount numeric not null default 0,
   note text,
+  customer_id uuid,
+  reference_number text,
   created_at timestamptz not null default now()
 );
 
@@ -312,4 +314,132 @@ create policy "Users can insert sale items for their store"
 create index if not exists idx_sales_store_id on public.sales (store_id);
 create index if not exists idx_sales_created_at on public.sales (created_at desc);
 create index if not exists idx_sale_items_sale_id on public.sale_items (sale_id);
+
+-- ─────────────────────────────────────────────
+-- Store Payment QR Details Migration
+-- ─────────────────────────────────────────────
+alter table public.stores
+  add column if not exists gcash_name text,
+  add column if not exists gcash_number text,
+  add column if not exists gcash_qr_url text,
+  add column if not exists maya_name text,
+  add column if not exists maya_number text,
+  add column if not exists maya_qr_url text;
+
+-- ─────────────────────────────────────────────
+-- Customers, Debts (Utang) & Audit Logs Tables
+-- ─────────────────────────────────────────────
+create table if not exists public.customers (
+  id uuid primary key default gen_random_uuid(),
+  store_id uuid not null references public.stores(id) on delete cascade,
+  name text not null,
+  phone text not null,
+  address text,
+  credit_limit numeric not null default 1000,
+  total_debt numeric not null default 0,
+  loyalty_points numeric not null default 0,
+  risk_status text not null default 'good' check (risk_status in ('good', 'warning', 'blacklisted')),
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.customers enable row level security;
+
+create policy "Users can view customers for their store"
+  on public.customers for select
+  using (store_id = public.current_user_store_id(auth.uid()));
+
+create policy "Users can manage customers for their store"
+  on public.customers for all
+  using (store_id = public.current_user_store_id(auth.uid()))
+  with check (store_id = public.current_user_store_id(auth.uid()));
+
+create index if not exists idx_customers_store_id on public.customers (store_id);
+
+create table if not exists public.debts (
+  id uuid primary key default gen_random_uuid(),
+  store_id uuid not null references public.stores(id) on delete cascade,
+  customer_id uuid not null references public.customers(id) on delete cascade,
+  customer_name text not null,
+  customer_phone text,
+  sale_id uuid references public.sales(id) on delete set null,
+  amount numeric not null check (amount > 0),
+  amount_paid numeric not null default 0 check (amount_paid >= 0),
+  balance numeric not null default 0,
+  status text not null default 'unpaid' check (status in ('unpaid', 'partial', 'paid')),
+  due_date date,
+  note text,
+  items_summary text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.debts enable row level security;
+
+create policy "Users can view debts for their store"
+  on public.debts for select
+  using (store_id = public.current_user_store_id(auth.uid()));
+
+create policy "Users can manage debts for their store"
+  on public.debts for all
+  using (store_id = public.current_user_store_id(auth.uid()))
+  with check (store_id = public.current_user_store_id(auth.uid()));
+
+create index if not exists idx_debts_store_id on public.debts (store_id);
+create index if not exists idx_debts_customer_id on public.debts (customer_id);
+create index if not exists idx_debts_status on public.debts (status);
+
+create table if not exists public.debt_payments (
+  id uuid primary key default gen_random_uuid(),
+  store_id uuid not null references public.stores(id) on delete cascade,
+  debt_id uuid not null references public.debts(id) on delete cascade,
+  customer_id uuid not null references public.customers(id) on delete cascade,
+  amount numeric not null check (amount > 0),
+  payment_method text not null default 'cash' check (payment_method in ('cash', 'gcash', 'maya', 'other')),
+  reference_number text,
+  recorded_by text not null default '',
+  note text,
+  created_at timestamptz not null default now()
+);
+
+alter table public.debt_payments enable row level security;
+
+create policy "Users can view debt payments for their store"
+  on public.debt_payments for select
+  using (store_id = public.current_user_store_id(auth.uid()));
+
+create policy "Users can insert debt payments for their store"
+  on public.debt_payments for insert
+  with check (store_id = public.current_user_store_id(auth.uid()));
+
+create index if not exists idx_debt_payments_debt_id on public.debt_payments (debt_id);
+
+create table if not exists public.audit_logs (
+  id uuid primary key default gen_random_uuid(),
+  store_id uuid not null references public.stores(id) on delete cascade,
+  actor_id uuid references auth.users(id) on delete set null,
+  actor_name text not null default '',
+  action text not null,
+  entity_type text not null,
+  entity_id text,
+  details text,
+  created_at timestamptz not null default now()
+);
+
+alter table public.audit_logs enable row level security;
+
+create policy "Admins and managers can view audit logs"
+  on public.audit_logs for select
+  using (
+    store_id = public.current_user_store_id(auth.uid())
+    and public.is_admin_or_manager(auth.uid())
+  );
+
+create policy "Users can insert audit logs for their store"
+  on public.audit_logs for insert
+  with check (store_id = public.current_user_store_id(auth.uid()));
+
+create index if not exists idx_audit_logs_store_id on public.audit_logs (store_id);
+create index if not exists idx_audit_logs_created_at on public.audit_logs (created_at desc);
 

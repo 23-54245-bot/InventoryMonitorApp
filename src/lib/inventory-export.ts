@@ -21,9 +21,18 @@ function buildRows(state: FreshMartState) {
   }));
 }
 
+function sanitizeCsvCell(value: string | number): string {
+  let str = String(value);
+  // CSV Formula Injection mitigation: if cell starts with =, +, -, @, \t, \r, prepend a single quote
+  if (/^[=+\-@\t\r]/.test(str)) {
+    str = "'" + str;
+  }
+  return `"${str.replace(/"/g, '""')}"`;
+}
+
 function toCsv(header: string[], rows: (string | number)[][]) {
   // Leading BOM so Excel/Word detect UTF-8 and render currency symbols (e.g. ₱) correctly.
-  return "\uFEFF" + [header, ...rows].map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(",")).join("\n");
+  return "\uFEFF" + [header, ...rows].map((row) => row.map(sanitizeCsvCell).join(",")).join("\n");
 }
 
 export function buildInventoryCsv(state: FreshMartState) {

@@ -58,7 +58,78 @@ export type SaleItem = {
   totalPrice: number;
 };
 
-export type PaymentMethod = "cash" | "card" | "e_wallet" | "other";
+export type PaymentMethod = "cash" | "card" | "e_wallet" | "credit" | "split" | "other";
+
+export type CustomerRiskStatus = "good" | "warning" | "blacklisted";
+
+export type Customer = {
+  id: string;
+  storeId?: string;
+  name: string;
+  phone: string;
+  address?: string;
+  creditLimit: number;
+  totalDebt: number;
+  loyaltyPoints: number;
+  riskStatus: CustomerRiskStatus;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DebtStatus = "unpaid" | "partial" | "paid";
+
+export type Debt = {
+  id: string;
+  storeId?: string;
+  customerId: string;
+  customerName: string;
+  customerPhone?: string;
+  saleId?: string;
+  amount: number;
+  amountPaid: number;
+  balance: number;
+  status: DebtStatus;
+  dueDate?: string;
+  note?: string;
+  itemsSummary?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DebtPayment = {
+  id: string;
+  storeId?: string;
+  debtId: string;
+  customerId: string;
+  amount: number;
+  paymentMethod: "cash" | "gcash" | "maya" | "other";
+  referenceNumber?: string;
+  recordedBy: string;
+  note?: string;
+  createdAt: string;
+};
+
+export type AuditLog = {
+  id: string;
+  storeId?: string;
+  actorId?: string;
+  actorName: string;
+  action: string;
+  entityType: string;
+  entityId?: string;
+  details?: string;
+  createdAt: string;
+};
+
+export type StorePaymentQRs = {
+  gcashName?: string;
+  gcashNumber?: string;
+  gcashQrUri?: string;
+  mayaName?: string;
+  mayaNumber?: string;
+  mayaQrUri?: string;
+};
 
 export type SaleTransaction = {
   id: string;
@@ -75,6 +146,12 @@ export type SaleTransaction = {
   note?: string;
   timestamp: string;
   items: SaleItem[];
+  customerId?: string;
+  customerName?: string;
+  referenceNumber?: string;
+  splitCashAmount?: number;
+  splitOtherAmount?: number;
+  splitOtherMethod?: "e_wallet" | "credit";
 };
 
 export type UserProfile = {
@@ -92,6 +169,7 @@ export type UserProfile = {
   storeName: string;
   businessHours?: string;
   permitNumber?: string;
+  storeQRs?: StorePaymentQRs;
   accessLevel: "Admin" | "Staff" | "Viewer";
   preferences: {
     notificationsEnabled: boolean;

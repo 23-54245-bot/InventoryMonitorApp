@@ -7,6 +7,7 @@ import { useMemo, useRef, useState } from "react";
 import {
     Alert,
     FlatList,
+    Image,
     Modal,
     Platform,
     Pressable,
@@ -37,7 +38,7 @@ const BARCODE_TYPES = ["ean13", "ean8", "code128", "code39", "upc_a", "upc_e", "
 export default function PosScreen() {
   const router = useRouter();
   const theme = useTheme();
-  const { state, processCheckout } = useStore();
+  const { state, customers, addCustomer, processCheckout } = useStore();
   const language = state.user.preferences?.language ?? "English";
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -59,6 +60,20 @@ export default function PosScreen() {
   const [amountTenderedStr, setAmountTenderedStr] = useState("");
   const [discountStr, setDiscountStr] = useState("0");
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // Advanced E-Wallet, Utang & Split Payment State
+  const [eWalletType, setEWalletType] = useState<"gcash" | "maya">("gcash");
+  const [refNumber, setRefNumber] = useState("");
+  const [selectedCustomerId, setSelectedCustomerId] = useState("");
+  const [newCustName, setNewCustName] = useState("");
+  const [newCustPhone, setNewCustPhone] = useState("");
+  const [creditDueDate, setCreditDueDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 15);
+    return d.toISOString().split("T")[0];
+  });
+  const [splitCashStr, setSplitCashStr] = useState("");
+  const [splitOtherMethod, setSplitOtherMethod] = useState<"e_wallet" | "credit">("e_wallet");
 
   // Completed Receipt Dialog state
   const [completedSale, setCompletedSale] = useState<SaleTransaction | null>(null);
@@ -174,9 +189,76 @@ export default function PosScreen() {
 
   const handleCompleteSale = async () => {
     if (cart.length === 0) return;
+
     if (paymentMethod === "cash" && amountTenderedVal < cartGrandTotal) {
       Alert.alert("Incomplete Payment", `Amount tendered (${getCurrency(amountTenderedVal)}) is less than total amount due (${getCurrency(cartGrandTotal)}).`);
       return;
+    }
+
+    let customerIdToUse = selectedCustomerId;
+    let customerNameToUse = "";
+    let customerPhoneToUse = "";
+
+    const isCredit = paymentMethod === "credit";
+    const isSplitCredit = paymentMethod === "split" && splitOtherMethod === "credit";
+
+    if (isCredit || isSplitCredit) {
+      if (!customerIdToUse) {
+        if (!newCustName.trim()) {
+          Alert.alert("Customer Required", "Please select an existing customer or enter a customer name for credit/utang purchase.");
+          return;
+        }
+        const created = await addCustomer({
+          name: newCustName.trim(),
+          phone: newCustPhone.trim() || "N/A",
+          creditLimit: 1000,
+          riskStatus: "good",
+        });
+        customerIdToUse = created.id;
+        customerNameToUse = created.name;
+        customerPhoneToUse = created.phone;
+      } else {
+        const existing = customers.find((c) => c.id === customerIdToUse);
+        if (existing) {
+          customerNameToUse = existing.name;
+          customerPhoneToUse = existing.phone;
+          const portion = isCredit ? cartGrandTotal : Math.max(0, cartGrandTotal - (Number(splitCashStr) || 0));
+          if (existing.totalDebt + portion > existing.creditLimit) {
+            const proceed = await new Promise<boolean>((resolve) => {
+              Alert.alert(
+                "Credit Limit Exceeded",
+                `${existing.name}'s credit limit is ${getCurrency(existing.creditLimit)}. Current debt is ${getCurrency(existing.totalDebt)}. Adding ${getCurrency(portion)} exceeds limit. Proceed anyway?`,
+                [
+                  { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+                  { text: "Proceed", style: "destructive", onPress: () => resolve(true) },
+                ]
+              );
+            });
+            if (!proceed) return;
+          }
+          if (existing.riskStatus === "blacklisted") {
+            const proceed = await new Promise<boolean>((resolve) => {
+              Alert.alert(
+                "Blacklisted Customer",
+                `${existing.name} is blacklisted for credit! Proceed anyway?`,
+                [
+                  { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+                  { text: "Override & Proceed", style: "destructive", onPress: () => resolve(true) },
+                ]
+              );
+            });
+            if (!proceed) return;
+          }
+        }
+      }
+    }
+
+    if (paymentMethod === "split") {
+      const cashPortion = Number(splitCashStr) || 0;
+      if (cashPortion <= 0 || cashPortion >= cartGrandTotal) {
+        Alert.alert("Split Payment Error", `Cash portion must be greater than ₱0 and less than total amount (${getCurrency(cartGrandTotal)}).`);
+        return;
+      }
     }
 
     setIsProcessing(true);
@@ -186,11 +268,24 @@ export default function PosScreen() {
         paymentMethod,
         amountTendered: paymentMethod === "cash" ? amountTenderedVal : cartGrandTotal,
         discount: discountVal,
+        customerId: (isCredit || isSplitCredit) ? customerIdToUse : undefined,
+        customerName: customerNameToUse || undefined,
+        customerPhone: customerPhoneToUse || undefined,
+        dueDate: (isCredit || isSplitCredit) ? creditDueDate : undefined,
+        referenceNumber: paymentMethod === "e_wallet" || (paymentMethod === "split" && splitOtherMethod === "e_wallet") ? refNumber.trim() || undefined : undefined,
+        splitCashAmount: paymentMethod === "split" ? (Number(splitCashStr) || 0) : undefined,
+        splitOtherAmount: paymentMethod === "split" ? Math.max(0, cartGrandTotal - (Number(splitCashStr) || 0)) : undefined,
+        splitOtherMethod: paymentMethod === "split" ? splitOtherMethod : undefined,
       });
 
       if (result.success && result.sale) {
         setCheckoutVisible(false);
         setCart([]);
+        setRefNumber("");
+        setSelectedCustomerId("");
+        setNewCustName("");
+        setNewCustPhone("");
+        setSplitCashStr("");
         setCompletedSale(result.sale);
       } else {
         Alert.alert("Checkout Error", result.error ?? "Failed to process sale.");
@@ -252,16 +347,44 @@ export default function PosScreen() {
               <span>TOTAL:</span><span>${getCurrency(completedSale.totalAmount)}</span>
             </div>
             <div style="display: flex; justify-content: space-between; margin-top: 6px;">
-              <span>Payment (${completedSale.paymentMethod.toUpperCase()}):</span>
-              <span>${getCurrency(completedSale.amountTendered)}</span>
+              <span>Payment:</span>
+              <span>${completedSale.paymentMethod.toUpperCase()}</span>
             </div>
-            <div style="display: flex; justify-content: space-between;">
-              <span>Change Due:</span><span>${getCurrency(completedSale.changeAmount)}</span>
-            </div>
+            ${
+              completedSale.referenceNumber
+                ? `<div style="display: flex; justify-content: space-between;">
+                     <span>Ref No:</span><span>${completedSale.referenceNumber}</span>
+                   </div>`
+                : ""
+            }
+            ${
+              completedSale.customerName
+                ? `<div style="display: flex; justify-content: space-between;">
+                     <span>Customer:</span><span>${completedSale.customerName}</span>
+                   </div>`
+                : ""
+            }
+            ${
+              completedSale.splitCashAmount
+                ? `<div style="display: flex; justify-content: space-between; font-size: 11px; color: #555;">
+                     <span>Split:</span><span>Cash ${getCurrency(completedSale.splitCashAmount)} + ${completedSale.splitOtherMethod?.toUpperCase()} ${getCurrency(completedSale.splitOtherAmount ?? 0)}</span>
+                   </div>`
+                : ""
+            }
+            ${
+              completedSale.paymentMethod === "cash"
+                ? `<div style="display: flex; justify-content: space-between;">
+                     <span>Tendered:</span><span>${getCurrency(completedSale.amountTendered)}</span>
+                   </div>
+                   <div style="display: flex; justify-content: space-between;">
+                     <span>Change Due:</span><span>${getCurrency(completedSale.changeAmount)}</span>
+                   </div>`
+                : ""
+            }
           </div>
           <div style="text-align: center; margin-top: 24px; font-size: 12px;">
             <p>Cashier: ${completedSale.cashierName}</p>
-            <p>Thank you for your business!</p>
+            <p>Maraming Salamat Po!</p>
           </div>
         </body>
       </html>
@@ -581,45 +704,38 @@ export default function PosScreen() {
             <ScrollView contentContainerStyle={{ padding: 16 }}>
               {/* Payment Methods */}
               <View style={styles.paymentMethodRow}>
-                {(["cash", "card", "e_wallet", "other"] as PaymentMethod[]).map((m) => (
+                {([
+                  { key: "cash", label: translate(language, "cash"), icon: "cash" },
+                  { key: "e_wallet", label: "GCash / Maya", icon: "cellphone-check" },
+                  { key: "credit", label: translate(language, "utang") || "Utang", icon: "book-account-outline" },
+                  { key: "split", label: translate(language, "splitPayment") || "Split", icon: "call-split" },
+                  { key: "card", label: translate(language, "card"), icon: "credit-card-outline" },
+                  { key: "other", label: translate(language, "other"), icon: "dots-horizontal-circle-outline" },
+                ] as const).map((m) => (
                   <Pressable
-                    key={m}
-                    onPress={() => setPaymentMethod(m)}
+                    key={m.key}
+                    onPress={() => setPaymentMethod(m.key)}
                     style={[
                       styles.paymentMethodCard,
                       {
                         backgroundColor:
-                          paymentMethod === m ? theme.colors.primaryContainer : theme.colors.surfaceVariant,
-                        borderColor: paymentMethod === m ? theme.colors.primary : "transparent",
+                          paymentMethod === m.key ? theme.colors.primaryContainer : theme.colors.surfaceVariant,
+                        borderColor: paymentMethod === m.key ? theme.colors.primary : "transparent",
                       },
                     ]}
                   >
                     <MaterialCommunityIcons
-                      name={
-                        m === "cash"
-                          ? "cash"
-                          : m === "card"
-                          ? "credit-card-outline"
-                          : m === "e_wallet"
-                          ? "cellphone-check"
-                          : "dots-horizontal-circle-outline"
-                      }
+                      name={m.icon as any}
                       size={24}
-                      color={paymentMethod === m ? theme.colors.primary : theme.colors.onSurfaceVariant}
+                      color={paymentMethod === m.key ? theme.colors.primary : theme.colors.onSurfaceVariant}
                     />
                     <Text
                       style={[
                         styles.paymentMethodText,
-                        { color: paymentMethod === m ? theme.colors.primary : theme.colors.onSurface },
+                        { color: paymentMethod === m.key ? theme.colors.primary : theme.colors.onSurface },
                       ]}
                     >
-                      {m === "cash"
-                        ? translate(language, "cash")
-                        : m === "card"
-                        ? translate(language, "card")
-                        : m === "e_wallet"
-                        ? "GCash / Maya"
-                        : translate(language, "other")}
+                      {m.label}
                     </Text>
                   </Pressable>
                 ))}
@@ -634,7 +750,7 @@ export default function PosScreen() {
                   keyboardType="numeric"
                   value={discountStr}
                   onChangeText={setDiscountStr}
-                  style={[styles.textInput, { color: theme.colors.onSurface, borderColor: theme.colors.outline }]}
+                  style={[styles.textInput, { color: theme.colors.onSurface, borderColor: theme.colors.outline, backgroundColor: theme.colors.surface }]}
                 />
               </View>
 
@@ -648,7 +764,7 @@ export default function PosScreen() {
                     keyboardType="numeric"
                     value={amountTenderedStr}
                     onChangeText={setAmountTenderedStr}
-                    style={[styles.textInput, { fontSize: 20, fontWeight: "700", color: theme.colors.onSurface, borderColor: theme.colors.outline }]}
+                    style={[styles.textInput, { fontSize: 20, fontWeight: "700", color: theme.colors.onSurface, borderColor: theme.colors.outline, backgroundColor: theme.colors.surface }]}
                   />
 
                   {/* Preset quick cash chips */}
@@ -671,6 +787,301 @@ export default function PosScreen() {
                       </Chip>
                     ))}
                   </View>
+                </View>
+              ) : null}
+
+              {/* E-Wallet GCash / Maya Screen */}
+              {paymentMethod === "e_wallet" ? (
+                <View style={[styles.paymentDetailBox, { backgroundColor: theme.colors.surfaceVariant, borderColor: theme.colors.outlineVariant }]}>
+                  <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+                    <Chip
+                      selected={eWalletType === "gcash"}
+                      onPress={() => setEWalletType("gcash")}
+                      style={{ flex: 1 }}
+                      textStyle={{ fontWeight: "700" }}
+                    >
+                      GCash
+                    </Chip>
+                    <Chip
+                      selected={eWalletType === "maya"}
+                      onPress={() => setEWalletType("maya")}
+                      style={{ flex: 1 }}
+                      textStyle={{ fontWeight: "700" }}
+                    >
+                      Maya
+                    </Chip>
+                  </View>
+
+                  {(() => {
+                    const isGcash = eWalletType === "gcash";
+                    const qrUri = isGcash ? state.user.storeQRs?.gcashQrUri : state.user.storeQRs?.mayaQrUri;
+                    const accName = isGcash ? state.user.storeQRs?.gcashName : state.user.storeQRs?.mayaName;
+                    const accNumber = isGcash ? state.user.storeQRs?.gcashNumber : state.user.storeQRs?.mayaNumber;
+                    return (
+                      <View style={{ alignItems: "center", marginBottom: 12 }}>
+                        {qrUri ? (
+                          <Image
+                            source={{ uri: qrUri }}
+                            style={{ width: 140, height: 140, borderRadius: 8, marginBottom: 8 }}
+                            resizeMode="contain"
+                          />
+                        ) : null}
+                        {accName ? (
+                          <Text style={{ fontSize: 13, fontWeight: "700", color: theme.colors.onSurfaceVariant }}>
+                            {accName}
+                          </Text>
+                        ) : null}
+                        {accNumber ? (
+                          <Text
+                            selectable
+                            style={{ fontSize: 16, fontWeight: "800", color: theme.colors.primary, marginTop: 2 }}
+                          >
+                            {accNumber}
+                          </Text>
+                        ) : null}
+                        {!qrUri && !accNumber ? (
+                          <Text style={{ fontSize: 12, color: theme.colors.onSurfaceVariant, textAlign: "center", fontStyle: "italic", paddingHorizontal: 12 }}>
+                            No {isGcash ? "GCash" : "Maya"} QR uploaded yet. Go to Profile &gt; Store to configure. You can still accept payment and enter the reference number below.
+                          </Text>
+                        ) : null}
+                      </View>
+                    );
+                  })()}
+
+                  <View style={styles.formRow}>
+                    <Text style={[styles.inputLabel, { color: theme.colors.onSurface }]}>
+                      {translate(language, "paymentRefNumber") || "Payment Reference Number"}
+                    </Text>
+                    <TextInput
+                      placeholder="e.g. 10098234857"
+                      placeholderTextColor={theme.colors.onSurfaceVariant}
+                      value={refNumber}
+                      onChangeText={setRefNumber}
+                      style={[styles.textInput, { color: theme.colors.onSurface, borderColor: theme.colors.outline, backgroundColor: theme.colors.surface }]}
+                    />
+                  </View>
+                </View>
+              ) : null}
+
+              {/* Utang / Customer Credit Section */}
+              {paymentMethod === "credit" ? (
+                <View style={[styles.paymentDetailBox, { backgroundColor: theme.colors.surfaceVariant, borderColor: theme.colors.outlineVariant }]}>
+                  <Text style={[styles.inputLabel, { color: theme.colors.onSurface, fontWeight: "700", marginBottom: 8 }]}>
+                    Select Customer (Utang Ledger)
+                  </Text>
+
+                  {/* Customer List Chips */}
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                    <Chip
+                      selected={selectedCustomerId === ""}
+                      onPress={() => setSelectedCustomerId("")}
+                      style={{ marginRight: 6 }}
+                      textStyle={{ fontWeight: "700" }}
+                    >
+                      + New Customer
+                    </Chip>
+                    {customers.map((c) => (
+                      <Chip
+                        key={c.id}
+                        selected={selectedCustomerId === c.id}
+                        onPress={() => setSelectedCustomerId(c.id)}
+                        style={{ marginRight: 6 }}
+                      >
+                        {c.name} {c.totalDebt > 0 ? `(₱${c.totalDebt.toFixed(0)})` : ""}
+                      </Chip>
+                    ))}
+                  </ScrollView>
+
+                  {selectedCustomerId ? (
+                    (() => {
+                      const cust = customers.find((c) => c.id === selectedCustomerId);
+                      if (!cust) return null;
+                      const isExceeded = (cust.totalDebt + cartGrandTotal) > cust.creditLimit;
+                      return (
+                        <View style={{ padding: 10, borderRadius: 8, backgroundColor: theme.colors.surface, marginBottom: 12 }}>
+                          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                            <Text style={{ fontWeight: "800", color: theme.colors.onSurface, fontSize: 14 }}>{cust.name}</Text>
+                            <Badge style={{ backgroundColor: cust.riskStatus === "good" ? "#16a34a" : cust.riskStatus === "warning" ? "#d97706" : "#dc2626", color: "#fff" }}>
+                              {cust.riskStatus.toUpperCase()}
+                            </Badge>
+                          </View>
+                          <Text style={{ fontSize: 12, color: theme.colors.onSurfaceVariant, marginTop: 4 }}>
+                            Phone: {cust.phone || "None"}
+                          </Text>
+                          <Text style={{ fontSize: 12, color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
+                            Current Debt: {getCurrency(cust.totalDebt)} / Limit: {getCurrency(cust.creditLimit)}
+                          </Text>
+                          {isExceeded ? (
+                            <Text style={{ fontSize: 12, color: theme.colors.error, fontWeight: "700", marginTop: 4 }}>
+                              ⚠️ This purchase exceeds the customer's credit limit!
+                            </Text>
+                          ) : null}
+                        </View>
+                      );
+                    })()
+                  ) : (
+                    <View style={{ marginBottom: 12 }}>
+                      <View style={styles.formRow}>
+                        <Text style={[styles.inputLabel, { color: theme.colors.onSurface }]}>Customer Name *</Text>
+                        <TextInput
+                          placeholder="e.g. Maria Santos"
+                          placeholderTextColor={theme.colors.onSurfaceVariant}
+                          value={newCustName}
+                          onChangeText={setNewCustName}
+                          style={[styles.textInput, { color: theme.colors.onSurface, borderColor: theme.colors.outline, backgroundColor: theme.colors.surface }]}
+                        />
+                      </View>
+                      <View style={styles.formRow}>
+                        <Text style={[styles.inputLabel, { color: theme.colors.onSurface }]}>Phone Number (for SMS reminders)</Text>
+                        <TextInput
+                          placeholder="0917xxxxxxx"
+                          placeholderTextColor={theme.colors.onSurfaceVariant}
+                          keyboardType="phone-pad"
+                          value={newCustPhone}
+                          onChangeText={setNewCustPhone}
+                          style={[styles.textInput, { color: theme.colors.onSurface, borderColor: theme.colors.outline, backgroundColor: theme.colors.surface }]}
+                        />
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Due Date Presets */}
+                  <View style={styles.formRow}>
+                    <Text style={[styles.inputLabel, { color: theme.colors.onSurface }]}>
+                      Due Date: <Text style={{ fontWeight: "700", color: theme.colors.primary }}>{creditDueDate}</Text>
+                    </Text>
+                    <View style={{ flexDirection: "row", gap: 6, marginTop: 4 }}>
+                      {[7, 15, 30].map((days) => (
+                        <Chip
+                          key={days}
+                          compact
+                          onPress={() => {
+                            const d = new Date();
+                            d.setDate(d.getDate() + days);
+                            setCreditDueDate(d.toISOString().split("T")[0]);
+                          }}
+                        >
+                          +{days} Days
+                        </Chip>
+                      ))}
+                    </View>
+                  </View>
+                </View>
+              ) : null}
+
+              {/* Split Payment Section */}
+              {paymentMethod === "split" ? (
+                <View style={[styles.paymentDetailBox, { backgroundColor: theme.colors.surfaceVariant, borderColor: theme.colors.outlineVariant }]}>
+                  <Text style={[styles.inputLabel, { color: theme.colors.onSurface, fontWeight: "700", marginBottom: 8 }]}>
+                    {translate(language, "splitPayment") || "Split Payment"}
+                  </Text>
+
+                  <View style={styles.formRow}>
+                    <Text style={[styles.inputLabel, { color: theme.colors.onSurface }]}>Cash Portion (₱)</Text>
+                    <TextInput
+                      placeholder="0.00"
+                      placeholderTextColor={theme.colors.onSurfaceVariant}
+                      keyboardType="numeric"
+                      value={splitCashStr}
+                      onChangeText={setSplitCashStr}
+                      style={[styles.textInput, { fontSize: 18, fontWeight: "700", color: theme.colors.onSurface, borderColor: theme.colors.outline, backgroundColor: theme.colors.surface }]}
+                    />
+                    <View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
+                      <Chip
+                        compact
+                        onPress={() => setSplitCashStr(String(Math.floor(cartGrandTotal / 2)))}
+                      >
+                        50% Cash (₱{Math.floor(cartGrandTotal / 2)})
+                      </Chip>
+                    </View>
+                  </View>
+
+                  {/* Remaining Balance display */}
+                  <View style={{ padding: 10, borderRadius: 8, backgroundColor: theme.colors.surface, marginBottom: 12 }}>
+                    <View style={styles.summaryLine}>
+                      <Text style={{ fontWeight: "600", color: theme.colors.onSurfaceVariant }}>Remaining Balance:</Text>
+                      <Text style={{ fontWeight: "800", fontSize: 16, color: theme.colors.primary }}>
+                        {getCurrency(Math.max(0, cartGrandTotal - (Number(splitCashStr) || 0)))}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <Text style={[styles.inputLabel, { color: theme.colors.onSurface, marginBottom: 6 }]}>
+                    Pay Remaining Balance With:
+                  </Text>
+                  <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+                    <Chip
+                      selected={splitOtherMethod === "e_wallet"}
+                      onPress={() => setSplitOtherMethod("e_wallet")}
+                      icon="cellphone-check"
+                      style={{ flex: 1 }}
+                      textStyle={{ fontWeight: "700" }}
+                    >
+                      GCash / Maya
+                    </Chip>
+                    <Chip
+                      selected={splitOtherMethod === "credit"}
+                      onPress={() => setSplitOtherMethod("credit")}
+                      icon="book-account-outline"
+                      style={{ flex: 1 }}
+                      textStyle={{ fontWeight: "700" }}
+                    >
+                      Utang / Credit
+                    </Chip>
+                  </View>
+
+                  {splitOtherMethod === "e_wallet" ? (
+                    <View>
+                      <View style={styles.formRow}>
+                        <Text style={[styles.inputLabel, { color: theme.colors.onSurface }]}>
+                          E-Wallet Reference No.
+                        </Text>
+                        <TextInput
+                          placeholder="e.g. 10098234857"
+                          placeholderTextColor={theme.colors.onSurfaceVariant}
+                          value={refNumber}
+                          onChangeText={setRefNumber}
+                          style={[styles.textInput, { color: theme.colors.onSurface, borderColor: theme.colors.outline, backgroundColor: theme.colors.surface }]}
+                        />
+                      </View>
+                    </View>
+                  ) : (
+                    <View>
+                      <Text style={[styles.inputLabel, { color: theme.colors.onSurface, fontWeight: "600", marginBottom: 6 }]}>
+                        Select Customer for Remaining Utang:
+                      </Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+                        <Chip
+                          selected={selectedCustomerId === ""}
+                          onPress={() => setSelectedCustomerId("")}
+                          style={{ marginRight: 6 }}
+                        >
+                          + New Customer
+                        </Chip>
+                        {customers.map((c) => (
+                          <Chip
+                            key={c.id}
+                            selected={selectedCustomerId === c.id}
+                            onPress={() => setSelectedCustomerId(c.id)}
+                            style={{ marginRight: 6 }}
+                          >
+                            {c.name}
+                          </Chip>
+                        ))}
+                      </ScrollView>
+                      {!selectedCustomerId ? (
+                        <View style={styles.formRow}>
+                          <TextInput
+                            placeholder="Customer Name *"
+                            placeholderTextColor={theme.colors.onSurfaceVariant}
+                            value={newCustName}
+                            onChangeText={setNewCustName}
+                            style={[styles.textInput, { color: theme.colors.onSurface, borderColor: theme.colors.outline, backgroundColor: theme.colors.surface }]}
+                          />
+                        </View>
+                      ) : null}
+                    </View>
+                  )}
                 </View>
               ) : null}
 
@@ -702,6 +1113,24 @@ export default function PosScreen() {
                     </Text>
                     <Text style={{ fontWeight: "800", fontSize: 18, color: theme.colors.secondary }}>
                       {getCurrency(changeDue)}
+                    </Text>
+                  </View>
+                ) : paymentMethod === "split" ? (
+                  <View style={[styles.summaryLine, { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: "#00000018" }]}>
+                    <Text style={{ fontWeight: "700", color: theme.colors.secondary }}>
+                      Cash Paid / Remaining:
+                    </Text>
+                    <Text style={{ fontWeight: "800", fontSize: 16, color: theme.colors.secondary }}>
+                      {getCurrency(Number(splitCashStr) || 0)} / {getCurrency(Math.max(0, cartGrandTotal - (Number(splitCashStr) || 0)))}
+                    </Text>
+                  </View>
+                ) : paymentMethod === "credit" ? (
+                  <View style={[styles.summaryLine, { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: "#00000018" }]}>
+                    <Text style={{ fontWeight: "700", color: "#d97706" }}>
+                      Added to Utang:
+                    </Text>
+                    <Text style={{ fontWeight: "800", fontSize: 16, color: "#d97706" }}>
+                      {getCurrency(cartGrandTotal)}
                     </Text>
                   </View>
                 ) : null}
@@ -951,15 +1380,22 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
     marginBottom: 16,
+    flexWrap: "wrap",
   },
   paymentMethodCard: {
-    flex: 1,
+    width: "30%",
     alignItems: "center",
     padding: 10,
     borderRadius: 10,
     borderWidth: 1.5,
   },
   paymentMethodText: { fontSize: 11, fontWeight: "700", marginTop: 4, textAlign: "center" },
+  paymentDetailBox: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    marginBottom: 16,
+  },
   formRow: { marginBottom: 14 },
   inputLabel: { fontSize: 13, fontWeight: "600", marginBottom: 4 },
   textInput: {

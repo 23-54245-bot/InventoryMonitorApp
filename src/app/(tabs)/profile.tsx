@@ -3,7 +3,7 @@ import { Camera } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Dimensions, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Dimensions, Image, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Avatar, Button, Card, Chip, IconButton, List, Modal, Portal, ProgressBar, Text, TextInput, TouchableRipple, useTheme } from "react-native-paper";
 import Animated, { FadeIn } from "react-native-reanimated";
 
@@ -32,7 +32,7 @@ export default function ProfileScreen() {
   const router = useRouter();
   const theme = useTheme();
   const { session, employees, addEmployee, updateEmployee, removeEmployee } = useAuth();
-  const { state, summary, updateUserProfile } = useStore();
+  const { state, summary, updateUserProfile, updateStorePaymentQRs } = useStore();
   const language = state.user.preferences.language;
   const currentMonth = new Date().toISOString().slice(0, 7);
   const monthlyMovements = state.movements.filter((movement) => movement.timestamp.slice(0, 7) === currentMonth);
@@ -42,6 +42,7 @@ export default function ProfileScreen() {
 
   const [activeTab, setActiveTab] = useState<(typeof profileTabs)[number]>("Account");
   const [modal, setModal] = useState<"store" | null>(null);
+  const [qrModal, setQrModal] = useState(false);
   const [exportDialog, setExportDialog] = useState<"inventory" | "activity" | null>(null);
   const [storeName, setStoreName] = useState(state.user.storeName);
   const [storeAddress, setStoreAddress] = useState(state.user.address ?? "");
@@ -56,6 +57,16 @@ export default function ProfileScreen() {
   const [address, setAddress] = useState(state.user.address ?? "");
   const [avatarUri, setAvatarUri] = useState<string | undefined>(state.user.avatarUri);
   const [saving, setSaving] = useState(false);
+
+  // QR Code setup state
+  const [gcashName, setGcashName] = useState(state.user.storeQRs?.gcashName ?? "");
+  const [gcashNumber, setGcashNumber] = useState(state.user.storeQRs?.gcashNumber ?? "");
+  const [gcashQrUri, setGcashQrUri] = useState<string | undefined>(state.user.storeQRs?.gcashQrUri);
+  const [mayaName, setMayaName] = useState(state.user.storeQRs?.mayaName ?? "");
+  const [mayaNumber, setMayaNumber] = useState(state.user.storeQRs?.mayaNumber ?? "");
+  const [mayaQrUri, setMayaQrUri] = useState<string | undefined>(state.user.storeQRs?.mayaQrUri);
+  const [savingQRs, setSavingQRs] = useState(false);
+
   const [managerMode, setManagerMode] = useState<"add" | "edit" | null>(null);
   const [employeeForm, setEmployeeForm] = useState({ id: "", name: "", email: "", role: "Staff" as UserRole, status: "Active" as EmployeeStatus });
   const [employeeMessage, setEmployeeMessage] = useState<string | null>(null);
@@ -73,6 +84,13 @@ export default function ProfileScreen() {
     setPhone(state.user.phone ?? "");
     setAddress(state.user.address ?? "");
     setAvatarUri(state.user.avatarUri);
+
+    setGcashName(state.user.storeQRs?.gcashName ?? "");
+    setGcashNumber(state.user.storeQRs?.gcashNumber ?? "");
+    setGcashQrUri(state.user.storeQRs?.gcashQrUri);
+    setMayaName(state.user.storeQRs?.mayaName ?? "");
+    setMayaNumber(state.user.storeQRs?.mayaNumber ?? "");
+    setMayaQrUri(state.user.storeQRs?.mayaQrUri);
   }, [state.user]);
 
   useEffect(() => {
@@ -225,6 +243,48 @@ export default function ProfileScreen() {
     setPermitNumber(nextPermitNumber ?? "");
     updateUserProfile({ storeName: nextStoreName, storeEmail: nextStoreEmail, address: nextAddress, phone: nextPhone, businessHours: nextBusinessHours, permitNumber: nextPermitNumber });
     setModal(null);
+  };
+
+  const handlePickGCashQR = async () => {
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"] as any,
+      allowsEditing: true,
+      quality: 0.8,
+    });
+    if (!res.canceled && res.assets[0]?.uri) {
+      setGcashQrUri(res.assets[0].uri);
+    }
+  };
+
+  const handlePickMayaQR = async () => {
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"] as any,
+      allowsEditing: true,
+      quality: 0.8,
+    });
+    if (!res.canceled && res.assets[0]?.uri) {
+      setMayaQrUri(res.assets[0].uri);
+    }
+  };
+
+  const handleSaveQRs = async () => {
+    setSavingQRs(true);
+    try {
+      await updateStorePaymentQRs({
+        gcashName: gcashName.trim() || undefined,
+        gcashNumber: gcashNumber.trim() || undefined,
+        gcashQrUri,
+        mayaName: mayaName.trim() || undefined,
+        mayaNumber: mayaNumber.trim() || undefined,
+        mayaQrUri,
+      });
+      setQrModal(false);
+      showAlert("Saved", "Digital payment QR codes updated successfully.");
+    } catch {
+      showAlert("Error", "Failed to update digital payment QR codes.");
+    } finally {
+      setSavingQRs(false);
+    }
   };
 
   const handleDataAction = (action: "sync" | "clear") => {
@@ -395,6 +455,25 @@ export default function ProfileScreen() {
             </Card>
             <Card style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}> 
               <Card.Content>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <Text style={[styles.cardTitle, { color: theme.colors.onSurface, marginBottom: 0 }]}>Digital Payment QRs</Text>
+                  <Chip compact style={{ backgroundColor: (gcashNumber || mayaNumber) ? "#DCFCE7" : "#F1F5F9" }} textStyle={{ color: (gcashNumber || mayaNumber) ? "#166534" : "#64748B", fontWeight: "700" }}>
+                    {(gcashNumber || mayaNumber) ? "Configured" : "Not Set Up"}
+                  </Chip>
+                </View>
+                <Text style={[styles.helperText, { color: theme.colors.onSurfaceVariant, marginBottom: 12 }]}>
+                  Customers scan these QR codes directly at POS checkout to pay with GCash or Maya.
+                </Text>
+                <InfoRow label="GCash" value={gcashNumber ? `${gcashName ? gcashName + ' · ' : ''}${gcashNumber}` : "Not set up"} theme={theme} />
+                <InfoRow label="Maya" value={mayaNumber ? `${mayaName ? mayaName + ' · ' : ''}${mayaNumber}` : "Not set up"} theme={theme} last />
+                <Button mode="outlined" icon="qrcode" onPress={() => setQrModal(true)} style={{ marginTop: 12 }}>
+                  Set Up GCash & Maya QRs
+                </Button>
+              </Card.Content>
+            </Card>
+
+            <Card style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}> 
+              <Card.Content>
                 <Text style={[styles.cardTitle, { color: theme.colors.onSurface }]}>Categories Managed</Text>
                 <View style={styles.categoryRow}>{Array.from(new Set(state.products.map((product) => product.category))).map((category) => <Chip key={category} compact style={[styles.categoryChip, { backgroundColor: theme.colors.secondaryContainer }]} textStyle={{ color: theme.colors.onSecondaryContainer }}>{category}</Chip>)}</View>
               </Card.Content>
@@ -524,6 +603,69 @@ export default function ProfileScreen() {
           <View style={styles.editActionRow}>
             <Button mode="outlined" onPress={() => setModal(null)} style={styles.editActionButton}>{translate(language, "cancelButton")}</Button>
             <Button mode="contained" onPress={saveStoreInformation} style={styles.editActionButton}>Save Changes</Button>
+          </View>
+        </Modal>
+
+        <Modal visible={qrModal} onDismiss={() => setQrModal(false)} contentContainerStyle={[styles.modal, { backgroundColor: theme.colors.surface, marginBottom: keyboardOffset, maxHeight: Math.min(Dimensions.get("window").height * 0.9, Dimensions.get("window").height - keyboardOffset - 20) }]}>
+          <View style={styles.modalHeader}>
+            <View style={styles.modalHeaderTitleRow}>
+              <View style={[styles.editHeaderIcon, { backgroundColor: "#DBEAFE" }]}>
+                <IconButton icon="qrcode-scan" size={20} iconColor="#2563EB" style={{ margin: 0 }} />
+              </View>
+              <Text style={[styles.cardTitle, { color: theme.colors.onSurface, marginBottom: 0 }]}>Digital Payment QRs</Text>
+            </View>
+            <IconButton icon="close" onPress={() => setQrModal(false)} />
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false} style={styles.modalScroll} keyboardShouldPersistTaps="handled">
+            <Text style={{ fontSize: 13, color: "#64748B", marginBottom: 14 }}>
+              Set up your GCash and Maya accounts and upload QR code screenshots for customers to scan during checkout.
+            </Text>
+
+            {/* GCash Section */}
+            <View style={{ backgroundColor: "#F8FAFC", padding: 12, borderRadius: 12, borderWidth: 1, borderColor: "#E2E8F0", marginBottom: 16 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}>
+                <Text style={{ fontWeight: "700", color: "#0284C7", fontSize: 15, flex: 1 }}>💙 GCash Account & QR</Text>
+                {gcashQrUri ? (
+                  <Chip compact style={{ backgroundColor: "#DCFCE7" }} textStyle={{ color: "#166534", fontSize: 10 }}>QR Attached</Chip>
+                ) : null}
+              </View>
+              <TextInput label="Account Name" value={gcashName} onChangeText={setGcashName} mode="outlined" style={styles.input} placeholder="e.g. Juan Dela Cruz" />
+              <TextInput label="Mobile Number" value={gcashNumber} onChangeText={setGcashNumber} mode="outlined" style={styles.input} keyboardType="phone-pad" placeholder="09171234567" />
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginTop: 4 }}>
+                {gcashQrUri ? (
+                  <Image source={{ uri: gcashQrUri }} style={{ width: 64, height: 64, borderRadius: 8, borderWidth: 1, borderColor: "#CBD5E1" }} resizeMode="contain" />
+                ) : null}
+                <Button mode="contained-tonal" icon="image-outline" compact onPress={handlePickGCashQR}>
+                  {gcashQrUri ? "Change QR Image" : "Upload GCash QR"}
+                </Button>
+              </View>
+            </View>
+
+            {/* Maya Section */}
+            <View style={{ backgroundColor: "#F8FAFC", padding: 12, borderRadius: 12, borderWidth: 1, borderColor: "#E2E8F0", marginBottom: 16 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}>
+                <Text style={{ fontWeight: "700", color: "#16A34A", fontSize: 15, flex: 1 }}>💚 Maya Account & QR</Text>
+                {mayaQrUri ? (
+                  <Chip compact style={{ backgroundColor: "#DCFCE7" }} textStyle={{ color: "#166534", fontSize: 10 }}>QR Attached</Chip>
+                ) : null}
+              </View>
+              <TextInput label="Account Name" value={mayaName} onChangeText={setMayaName} mode="outlined" style={styles.input} placeholder="e.g. Juan Dela Cruz" />
+              <TextInput label="Mobile Number" value={mayaNumber} onChangeText={setMayaNumber} mode="outlined" style={styles.input} keyboardType="phone-pad" placeholder="09181234567" />
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginTop: 4 }}>
+                {mayaQrUri ? (
+                  <Image source={{ uri: mayaQrUri }} style={{ width: 64, height: 64, borderRadius: 8, borderWidth: 1, borderColor: "#CBD5E1" }} resizeMode="contain" />
+                ) : null}
+                <Button mode="contained-tonal" icon="image-outline" compact onPress={handlePickMayaQR}>
+                  {mayaQrUri ? "Change QR Image" : "Upload Maya QR"}
+                </Button>
+              </View>
+            </View>
+          </ScrollView>
+
+          <View style={styles.editActionRow}>
+            <Button mode="outlined" onPress={() => setQrModal(false)} style={styles.editActionButton}>{translate(language, "cancelButton")}</Button>
+            <Button mode="contained" onPress={handleSaveQRs} loading={savingQRs} style={styles.editActionButton}>Save QRs</Button>
           </View>
         </Modal>
       </Portal>

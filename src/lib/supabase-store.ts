@@ -280,3 +280,211 @@ export async function insertSale(
   return { success: true, saleId };
 }
 
+// ─── Customers ──────────────────────────────────────────────────────────────
+
+export async function fetchCustomers(storeId: string) {
+  const { data, error } = await supabase
+    .from("customers")
+    .select("*")
+    .eq("store_id", storeId)
+    .order("name", { ascending: true });
+
+  if (error || !data) return [];
+  return (data as any[]).map((row) => ({
+    id: row.id,
+    storeId: row.store_id,
+    name: row.name,
+    phone: row.phone,
+    address: row.address ?? undefined,
+    creditLimit: Number(row.credit_limit ?? 1000),
+    totalDebt: Number(row.total_debt ?? 0),
+    loyaltyPoints: Number(row.loyalty_points ?? 0),
+    riskStatus: row.risk_status ?? "good",
+    notes: row.notes ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+}
+
+export async function upsertCustomer(storeId: string, customer: any): Promise<boolean> {
+  const { error } = await supabase.from("customers").upsert(
+    {
+      id: customer.id,
+      store_id: storeId,
+      name: customer.name,
+      phone: customer.phone,
+      address: customer.address ?? null,
+      credit_limit: customer.creditLimit,
+      total_debt: customer.totalDebt,
+      loyalty_points: customer.loyaltyPoints,
+      risk_status: customer.riskStatus,
+      notes: customer.notes ?? null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "id" },
+  );
+  return !error;
+}
+
+export async function removeCustomer(customerId: string): Promise<boolean> {
+  const { error } = await supabase.from("customers").delete().eq("id", customerId);
+  return !error;
+}
+
+// ─── Debts (Utang) ──────────────────────────────────────────────────────────
+
+export async function fetchDebts(storeId: string) {
+  const { data, error } = await supabase
+    .from("debts")
+    .select("*")
+    .eq("store_id", storeId)
+    .order("created_at", { ascending: false });
+
+  if (error || !data) return [];
+  return (data as any[]).map((row) => ({
+    id: row.id,
+    storeId: row.store_id,
+    customerId: row.customer_id,
+    customerName: row.customer_name,
+    customerPhone: row.customer_phone ?? undefined,
+    saleId: row.sale_id ?? undefined,
+    amount: Number(row.amount),
+    amountPaid: Number(row.amount_paid ?? 0),
+    balance: Number(row.balance ?? 0),
+    status: row.status ?? "unpaid",
+    dueDate: row.due_date ?? undefined,
+    note: row.note ?? undefined,
+    itemsSummary: row.items_summary ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+}
+
+export async function insertDebt(storeId: string, debt: any): Promise<boolean> {
+  const { error } = await supabase.from("debts").insert({
+    id: debt.id,
+    store_id: storeId,
+    customer_id: debt.customerId,
+    customer_name: debt.customerName,
+    customer_phone: debt.customerPhone ?? null,
+    sale_id: debt.saleId ?? null,
+    amount: debt.amount,
+    amount_paid: debt.amountPaid ?? 0,
+    balance: debt.balance,
+    status: debt.status,
+    due_date: debt.dueDate ?? null,
+    note: debt.note ?? null,
+    items_summary: debt.itemsSummary ?? null,
+    created_at: debt.createdAt,
+    updated_at: debt.updatedAt,
+  });
+  return !error;
+}
+
+export async function updateDebtPayment(
+  storeId: string,
+  debtId: string,
+  customerId: string,
+  payment: {
+    amount: number;
+    paymentMethod: "cash" | "gcash" | "maya" | "other";
+    referenceNumber?: string;
+    recordedBy: string;
+    note?: string;
+  },
+  newAmountPaid: number,
+  newBalance: number,
+  newStatus: string,
+): Promise<boolean> {
+  // Update debt
+  const { error: debtErr } = await supabase
+    .from("debts")
+    .update({
+      amount_paid: newAmountPaid,
+      balance: newBalance,
+      status: newStatus,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", debtId);
+
+  if (debtErr) return false;
+
+  // Insert payment log
+  await supabase.from("debt_payments").insert({
+    store_id: storeId,
+    debt_id: debtId,
+    customer_id: customerId,
+    amount: payment.amount,
+    payment_method: payment.paymentMethod,
+    reference_number: payment.referenceNumber ?? null,
+    recorded_by: payment.recordedBy,
+    note: payment.note ?? null,
+  });
+
+  return true;
+}
+
+// ─── Audit Logs ─────────────────────────────────────────────────────────────
+
+export async function fetchAuditLogs(storeId: string) {
+  const { data, error } = await supabase
+    .from("audit_logs")
+    .select("*")
+    .eq("store_id", storeId)
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  if (error || !data) return [];
+  return (data as any[]).map((row) => ({
+    id: row.id,
+    storeId: row.store_id,
+    actorId: row.actor_id ?? undefined,
+    actorName: row.actor_name,
+    action: row.action,
+    entityType: row.entity_type,
+    entityId: row.entity_id ?? undefined,
+    details: row.details ?? undefined,
+    createdAt: row.created_at,
+  }));
+}
+
+export async function insertAuditLog(storeId: string, log: any): Promise<boolean> {
+  const { error } = await supabase.from("audit_logs").insert({
+    store_id: storeId,
+    actor_id: log.actorId ?? null,
+    actor_name: log.actorName,
+    action: log.action,
+    entity_type: log.entityType,
+    entity_id: log.entityId ?? null,
+    details: log.details ?? null,
+  });
+  return !error;
+}
+
+// ─── Store QR Codes ─────────────────────────────────────────────────────────
+
+export async function updateStoreQRs(
+  storeId: string,
+  qrs: {
+    gcashName?: string;
+    gcashNumber?: string;
+    gcashQrUri?: string;
+    mayaName?: string;
+    mayaNumber?: string;
+    mayaQrUri?: string;
+  },
+): Promise<boolean> {
+  const { error } = await supabase
+    .from("stores")
+    .update({
+      gcash_name: qrs.gcashName ?? null,
+      gcash_number: qrs.gcashNumber ?? null,
+      gcash_qr_url: qrs.gcashQrUri ?? null,
+      maya_name: qrs.mayaName ?? null,
+      maya_number: qrs.mayaNumber ?? null,
+      maya_qr_url: qrs.mayaQrUri ?? null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", storeId);
+  return !error;
+}

@@ -50,6 +50,7 @@ function AppShell() {
         <Stack.Screen name="change-password" options={{ presentation: "modal" }} />
         <Stack.Screen name="pos" options={{ presentation: "modal" }} />
         <Stack.Screen name="sales-history" options={{ presentation: "modal" }} />
+        <Stack.Screen name="utang" options={{ presentation: "modal" }} />
       </Stack>
       <Snackbar
         visible={updateAvailable}

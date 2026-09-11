@@ -64,25 +64,9 @@ export default function TabsLayout() {
 
   const allowedRoutes = getAllowedRoutes(session.role);
   const visibleTabs = tabDefinitions.filter((definition) => allowedRoutes.includes(definition.name) && definition.visible);
-  const currentTabIndex = Math.max(visibleTabs.findIndex((definition) => definition.name === currentRoute), 0);
-  const swipeResponder = PanResponder.create({
-    onMoveShouldSetPanResponder: (_, gestureState) =>
-      Math.abs(gestureState.dx) > 12 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.4,
-    onPanResponderRelease: (_, gestureState) => {
-      if (Math.abs(gestureState.dx) < 52 || Math.abs(gestureState.dx) < Math.abs(gestureState.dy) * 1.4) {
-        return;
-      }
-
-      const nextIndex = gestureState.dx < 0 ? currentTabIndex + 1 : currentTabIndex - 1;
-      const nextTab = visibleTabs[nextIndex];
-      if (nextTab) {
-        router.replace(nextTab.name === "index" ? "/" : `/${nextTab.name}` as any);
-      }
-    },
-  });
 
   return (
-    <View {...swipeResponder.panHandlers} style={{ flex: 1 }}>
+    <View style={{ flex: 1 }}>
       <Tabs
         screenOptions={{
           headerShown: false,
@@ -93,8 +77,11 @@ export default function TabsLayout() {
             height: 72,
             paddingBottom: 10,
             paddingTop: 10,
-            elevation: 12,
-            boxShadow: `0px -4px 18px rgba(15, 23, 42, 0.06)`,
+            elevation: 8,
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: -3 },
+            shadowOpacity: 0.08,
+            shadowRadius: 6,
           },
           tabBarActiveTintColor: theme.colors.primary,
           tabBarInactiveTintColor: theme.colors.onSurfaceVariant,

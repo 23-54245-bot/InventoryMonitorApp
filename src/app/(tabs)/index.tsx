@@ -38,6 +38,7 @@ export default function HomeScreen() {
     { label: translate(language, "stockInLabel"), icon: "arrow-up-right", route: { pathname: "/stock-movement", params: { type: "in" } }, accent: theme.colors.primary },
     { label: translate(language, "stockOutLabel"), icon: "arrow-down-right", route: { pathname: "/stock-movement", params: { type: "out" } }, accent: theme.colors.secondary },
     { label: translate(language, "productAddButton"), icon: "plus", route: "/add-product", accent: theme.colors.tertiary },
+    { label: translate(language, "utangTitle"), icon: "book-open-variant", route: "/utang", accent: "#d97706" },
   ] as const;
 
   const chipBackground = theme.dark ? theme.colors.surfaceVariant : theme.colors.surfaceVariant;
@@ -86,6 +87,25 @@ export default function HomeScreen() {
             </Text>
           </View>
           <IconButton icon="chevron-right" iconColor="#7c3aed" size={24} />
+        </View>
+      </TouchableRipple>
+
+      <TouchableRipple
+        borderless
+        onPress={() => router.push("/utang" as any)}
+        style={[styles.posBanner, { backgroundColor: theme.dark ? `${theme.colors.tertiary}18` : "#fffbeb", borderColor: "#f59e0b", marginTop: -2 }]}
+      >
+        <View style={styles.posContent}>
+          <IconButton icon="book-open-page-variant" iconColor="#d97706" containerColor="#fef3c7" size={24} />
+          <View style={styles.posText}>
+            <Text style={[styles.posTitle, { color: theme.dark ? theme.colors.onSurface : "#92400e" }]}>
+              {translate(language, "utangTitle")}
+            </Text>
+            <Text style={[styles.posSubtitle, { color: theme.dark ? theme.colors.onSurfaceVariant : "#b45309" }]}>
+              {translate(language, "utangSubtitle")}
+            </Text>
+          </View>
+          <IconButton icon="chevron-right" iconColor="#d97706" size={24} />
         </View>
       </TouchableRipple>
 

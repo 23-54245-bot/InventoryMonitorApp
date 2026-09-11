@@ -10,7 +10,7 @@ import { supabase } from "../lib/supabase";
 export type UserRole = "Admin" | "Manager" | "Staff";
 export type EmployeeStatus = "Active" | "Inactive";
 
-export type AppRoute = "/" | "/inventory" | "/alerts" | "/reports" | "/profit" | "/profile" | "/settings" | "/scan-modal" | "/product" | "/add-product" | "/stock-movement" | "/change-password" | "/pos" | "/sales-history";
+export type AppRoute = "/" | "/inventory" | "/alerts" | "/reports" | "/profit" | "/profile" | "/settings" | "/scan-modal" | "/product" | "/add-product" | "/stock-movement" | "/change-password" | "/pos" | "/sales-history" | "/utang";
 
 export type AuthSession = {
   email: string;
@@ -71,9 +71,9 @@ const LEGACY_SESSION_STORAGE_KEY = "freshmartims.auth";
 WebBrowser.maybeCompleteAuthSession();
 
 const routeAccessByRole: Record<UserRole, string[]> = {
-  Admin: ["index", "inventory", "alerts", "reports", "profit", "profile", "settings", "scan-modal", "product", "add-product", "stock-movement", "change-password", "pos", "sales-history"],
-  Manager: ["index", "inventory", "alerts", "reports", "profit", "profile", "settings", "scan-modal", "product", "add-product", "stock-movement", "change-password", "pos", "sales-history"],
-  Staff: ["index", "inventory", "alerts", "reports", "profit", "profile", "settings", "scan-modal", "product", "change-password", "pos", "sales-history"],
+  Admin: ["index", "inventory", "alerts", "reports", "profit", "profile", "settings", "scan-modal", "product", "add-product", "stock-movement", "change-password", "pos", "sales-history", "utang"],
+  Manager: ["index", "inventory", "alerts", "reports", "profit", "profile", "settings", "scan-modal", "product", "add-product", "stock-movement", "change-password", "pos", "sales-history", "utang"],
+  Staff: ["index", "inventory", "alerts", "reports", "profit", "profile", "settings", "scan-modal", "product", "change-password", "pos", "sales-history", "utang"],
 };
 
 const homeRouteByRole: Record<UserRole, AppRoute> = {

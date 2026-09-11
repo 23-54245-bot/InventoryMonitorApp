@@ -2,7 +2,11 @@ import { createContext, ReactNode, useContext, useEffect, useMemo, useRef, useSt
 import { AppLanguage } from "../lib/i18n";
 
 import {
+    AuditLog,
     CartItem,
+    Customer,
+    Debt,
+    DebtPayment,
     findProductBySku,
     FreshMartState,
     getCategoryBreakdown,
@@ -16,22 +20,32 @@ import {
     SaleItem,
     SaleTransaction,
     StockMovement,
+    StorePaymentQRs,
     TeamMember,
 } from "../data/freshmart";
 import { readStoredString, writeStoredString } from "../lib/storage";
 import { supabase } from "../lib/supabase";
 import {
+    fetchAuditLogs,
+    fetchCustomers,
+    fetchDebts,
     fetchMovements,
     fetchNotifications,
     fetchProducts,
     fetchSales,
+    insertAuditLog,
+    insertDebt,
     insertMovement,
     insertNotification,
     insertSale,
+    removeCustomer,
     removeNotification,
     removeProduct,
     updateAllNotificationsRead,
+    updateDebtPayment,
     updateNotificationRead,
+    updateStoreQRs,
+    upsertCustomer,
     upsertProduct,
 } from "../lib/supabase-store";
 import { useAuth } from "./auth";
@@ -45,6 +59,9 @@ type StoreContextValue = {
   recentActivity: ReturnType<typeof getRecentActivity>;
   teamMembers: TeamMember[];
   sales: SaleTransaction[];
+  customers: Customer[];
+  debts: Debt[];
+  auditLogs: AuditLog[];
   processCheckout: (checkoutData: {
     items: CartItem[];
     paymentMethod: PaymentMethod;
@@ -52,6 +69,14 @@ type StoreContextValue = {
     discount?: number;
     tax?: number;
     note?: string;
+    customerId?: string;
+    customerName?: string;
+    customerPhone?: string;
+    dueDate?: string;
+    referenceNumber?: string;
+    splitCashAmount?: number;
+    splitOtherAmount?: number;
+    splitOtherMethod?: "e_wallet" | "credit";
   }) => Promise<{ success: boolean; sale?: SaleTransaction; error?: string }>;
   loadSales: () => Promise<void>;
   getProduct: (id: string) => Product | undefined;
@@ -68,8 +93,22 @@ type StoreContextValue = {
   toggleBiometricPreference: () => void;
   toggleDarkMode: () => void;
   setLanguage: (language: AppLanguage) => void;
-  updateUserProfile: (patch: Partial<Pick<FreshMartState["user"], "name" | "username" | "email" | "storeEmail" | "phone" | "address" | "storeName" | "businessHours" | "permitNumber" | "avatarUri" | "avatarInitials">>) => void;
+  updateUserProfile: (patch: Partial<Pick<FreshMartState["user"], "name" | "username" | "email" | "storeEmail" | "phone" | "address" | "storeName" | "businessHours" | "permitNumber" | "avatarUri" | "avatarInitials" | "storeQRs">>) => void;
   updateTeamMemberAccess: (memberId: string, accessLevel: "Admin" | "Staff" | "Viewer") => void;
+  addCustomer: (customer: Omit<Customer, "id" | "createdAt" | "updatedAt" | "totalDebt" | "loyaltyPoints">) => Promise<Customer>;
+  updateCustomer: (customerId: string, patch: Partial<Customer>) => Promise<boolean>;
+  deleteCustomer: (customerId: string) => Promise<boolean>;
+  addDebt: (debt: Omit<Debt, "id" | "amountPaid" | "balance" | "status" | "createdAt" | "updatedAt">) => Promise<Debt>;
+  recordDebtPayment: (paymentData: {
+    debtId: string;
+    customerId: string;
+    amount: number;
+    paymentMethod: "cash" | "gcash" | "maya" | "other";
+    referenceNumber?: string;
+    note?: string;
+  }) => Promise<boolean>;
+  updateStorePaymentQRs: (qrs: StorePaymentQRs) => Promise<boolean>;
+  logAuditAction: (action: string, entityType: string, entityId?: string, details?: string) => void;
 };
 
 const STORAGE_KEY = "stocktrack.store.v2";
@@ -146,6 +185,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const { session, isReady: authReady } = useAuth();
   const [state, setState] = useState<FreshMartState>(() => createState());
   const [sales, setSales] = useState<SaleTransaction[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [debts, setDebts] = useState<Debt[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const loadedStorageKey = useRef<string | null>(null);
 
   // Preferences-only AsyncStorage key (products/movements/notifications now live in Supabase)
@@ -164,6 +206,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!accountSession) {
       setState(createState());
       setSales([]);
+      setCustomers([]);
+      setDebts([]);
+      setAuditLogs([]);
       loadedStorageKey.current = STORAGE_KEY;
       return;
     }
@@ -197,20 +242,53 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
         }
 
-        // 3. Load inventory data from Supabase (or empty if no store yet)
-        const [products, movements, notifications, loadedSales] = accountStoreId
+        // 3. Load inventory and utang/store data from Supabase (or empty if no store yet)
+        const [products, movements, notifications, loadedSales, loadedCustomers, loadedDebts, loadedAuditLogs, storeRes] = accountStoreId
           ? await Promise.all([
               fetchProducts(accountStoreId),
               fetchMovements(accountStoreId),
               fetchNotifications(accountStoreId),
               fetchSales(accountStoreId),
+              fetchCustomers(accountStoreId),
+              fetchDebts(accountStoreId),
+              fetchAuditLogs(accountStoreId),
+              supabase
+                .from("stores")
+                .select("name, phone, address, gcash_name, gcash_number, gcash_qr_url, maya_name, maya_number, maya_qr_url")
+                .eq("id", accountStoreId)
+                .maybeSingle(),
             ])
-          : [[], [], [], []] as [Product[], StockMovement[], NotificationItem[], SaleTransaction[]];
+          : [[], [], [], [], [], [], [], null] as any;
+
+        const storeData = storeRes?.data;
+        const storeQRs: StorePaymentQRs = {
+          gcashName: storeData?.gcash_name ?? undefined,
+          gcashNumber: storeData?.gcash_number ?? undefined,
+          gcashQrUri: storeData?.gcash_qr_url ?? undefined,
+          mayaName: storeData?.maya_name ?? undefined,
+          mayaNumber: storeData?.maya_number ?? undefined,
+          mayaQrUri: storeData?.maya_qr_url ?? undefined,
+        };
 
         if (active) {
           setSales(loadedSales);
+          setCustomers(loadedCustomers);
+          setDebts(loadedDebts);
+          setAuditLogs(loadedAuditLogs);
           setState(createState(
-            { ...savedPrefs, products, movements, notifications },
+            {
+              ...savedPrefs,
+              products,
+              movements,
+              notifications,
+              user: {
+                ...(savedPrefs.user ?? {}),
+                storeQRs,
+                storeName: storeData?.name ?? savedPrefs.user?.storeName ?? "",
+                phone: storeData?.phone ?? savedPrefs.user?.phone ?? undefined,
+                address: storeData?.address ?? savedPrefs.user?.address ?? undefined,
+              } as any,
+            },
             accountWithStoreId,
           ));
           loadedStorageKey.current = prefsStorageKey ?? STORAGE_KEY;
@@ -219,6 +297,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (active) {
           setState(createState(undefined, { ...accountSession }));
           setSales([]);
+          setCustomers([]);
+          setDebts([]);
+          setAuditLogs([]);
           loadedStorageKey.current = prefsStorageKey ?? STORAGE_KEY;
         }
       }
@@ -340,8 +421,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     discount?: number;
     tax?: number;
     note?: string;
+    customerId?: string;
+    customerName?: string;
+    customerPhone?: string;
+    dueDate?: string;
+    referenceNumber?: string;
+    splitCashAmount?: number;
+    splitOtherAmount?: number;
+    splitOtherMethod?: "e_wallet" | "credit";
   }): Promise<{ success: boolean; sale?: SaleTransaction; error?: string }> => {
-    const { items, paymentMethod, amountTendered, discount = 0, tax = 0, note } = checkoutData;
+    const {
+      items,
+      paymentMethod,
+      amountTendered,
+      discount = 0,
+      tax = 0,
+      note,
+      customerId,
+      customerName,
+      customerPhone,
+      dueDate,
+      referenceNumber,
+      splitCashAmount,
+      splitOtherAmount,
+      splitOtherMethod,
+    } = checkoutData;
+
     if (!items || items.length === 0) {
       return { success: false, error: "Cart is empty" };
     }
@@ -358,7 +463,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
     const totalAmount = Math.max(0, subtotal - discount + tax);
-    const changeAmount = Math.max(0, amountTendered - totalAmount);
+    const changeAmount = paymentMethod === "cash" ? Math.max(0, amountTendered - totalAmount) : 0;
     const receiptNumber = `REC-${Date.now().toString().slice(-6)}`;
     const timestamp = new Date().toISOString();
     const cashierName = state.user.name || "Cashier";
@@ -381,12 +486,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       tax,
       totalAmount,
       paymentMethod,
-      amountTendered,
+      amountTendered: paymentMethod === "cash" ? amountTendered : totalAmount,
       changeAmount,
       cashierName,
       note,
       timestamp,
       items: saleItems,
+      customerId,
+      customerName,
+      referenceNumber,
+      splitCashAmount,
+      splitOtherAmount,
+      splitOtherMethod,
     };
 
     const newMovements: StockMovement[] = [];
@@ -444,6 +555,77 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     setSales((prev) => [sale, ...prev]);
 
+    // Handle Utang / Customer Debt creation
+    const isCredit = paymentMethod === "credit";
+    const isSplitCredit = paymentMethod === "split" && splitOtherMethod === "credit";
+    const debtAmount = isCredit ? totalAmount : isSplitCredit ? (splitOtherAmount ?? Math.max(0, totalAmount - (splitCashAmount ?? 0))) : 0;
+
+    if (debtAmount > 0 && customerId && customerName) {
+      const debt: Debt = {
+        id: `debt-${Date.now()}`,
+        storeId: state.user.storeId,
+        customerId,
+        customerName,
+        customerPhone,
+        saleId: sale.id,
+        amount: debtAmount,
+        amountPaid: 0,
+        balance: debtAmount,
+        status: "unpaid",
+        dueDate,
+        note: `POS Sale ${receiptNumber}`,
+        itemsSummary: items.map((i) => `${i.quantity}x ${i.product.name}`).join(", "),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+
+      setDebts((prev) => [debt, ...prev]);
+      setCustomers((prev) =>
+        prev.map((c) =>
+          c.id === customerId
+            ? { ...c, totalDebt: c.totalDebt + debtAmount, updatedAt: timestamp }
+            : c
+        )
+      );
+
+      const storeId = state.user.storeId;
+      if (storeId) {
+        void insertDebt(storeId, debt);
+        const cust = customers.find((c) => c.id === customerId);
+        if (cust) {
+          void upsertCustomer(storeId, {
+            ...cust,
+            totalDebt: cust.totalDebt + debtAmount,
+          });
+        }
+      }
+    }
+
+    // Customer Loyalty Points: 1 pt per ₱100 paid non-credit
+    if (customerId) {
+      const paidPortion = isCredit ? 0 : isSplitCredit ? (splitCashAmount ?? 0) : totalAmount;
+      const pts = Math.floor(paidPortion / 100);
+      if (pts > 0) {
+        setCustomers((prev) =>
+          prev.map((c) =>
+            c.id === customerId
+              ? { ...c, loyaltyPoints: c.loyaltyPoints + pts, updatedAt: timestamp }
+              : c
+          )
+        );
+        const storeId = state.user.storeId;
+        if (storeId) {
+          const cust = customers.find((c) => c.id === customerId);
+          if (cust) {
+            void upsertCustomer(storeId, {
+              ...cust,
+              loyaltyPoints: cust.loyaltyPoints + pts,
+            });
+          }
+        }
+      }
+    }
+
     const storeId = state.user.storeId;
     if (storeId) {
       for (const prod of updatedProductsList) {
@@ -463,6 +645,179 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return { success: true, sale };
   };
 
+  const addCustomer = async (cust: Omit<Customer, "id" | "createdAt" | "updatedAt" | "totalDebt" | "loyaltyPoints">) => {
+    const storeId = getStoreId();
+    const newCust: Customer = {
+      ...cust,
+      id: `cust-${Date.now()}`,
+      storeId,
+      totalDebt: 0,
+      loyaltyPoints: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    setCustomers((prev) => [newCust, ...prev]);
+    if (storeId) void upsertCustomer(storeId, newCust);
+    logAuditAction("Created Customer", "customer", newCust.id, `Created ${newCust.name} (${newCust.phone})`);
+    return newCust;
+  };
+
+  const updateCustomer = async (customerId: string, patch: Partial<Customer>) => {
+    const storeId = getStoreId();
+    let updatedCustomer: Customer | undefined;
+    setCustomers((prev) =>
+      prev.map((c) => {
+        if (c.id === customerId) {
+          updatedCustomer = { ...c, ...patch, updatedAt: new Date().toISOString() };
+          return updatedCustomer;
+        }
+        return c;
+      })
+    );
+    if (storeId && updatedCustomer) {
+      void upsertCustomer(storeId, updatedCustomer);
+    }
+    logAuditAction("Updated Customer", "customer", customerId, `Updated details for ${patch.name ?? customerId}`);
+    return true;
+  };
+
+  const deleteCustomer = async (customerId: string) => {
+    const storeId = getStoreId();
+    setCustomers((prev) => prev.filter((c) => c.id !== customerId));
+    if (storeId) void removeCustomer(customerId);
+    logAuditAction("Deleted Customer", "customer", customerId);
+    return true;
+  };
+
+  const addDebt = async (debtData: Omit<Debt, "id" | "amountPaid" | "balance" | "status" | "createdAt" | "updatedAt">) => {
+    const storeId = getStoreId();
+    const now = new Date().toISOString();
+    const newDebt: Debt = {
+      ...debtData,
+      id: `debt-${Date.now()}`,
+      storeId,
+      amountPaid: 0,
+      balance: debtData.amount,
+      status: "unpaid",
+      createdAt: now,
+      updatedAt: now,
+    };
+    setDebts((prev) => [newDebt, ...prev]);
+    setCustomers((prev) =>
+      prev.map((c) =>
+        c.id === debtData.customerId
+          ? { ...c, totalDebt: c.totalDebt + debtData.amount, updatedAt: now }
+          : c
+      )
+    );
+    if (storeId) {
+      void insertDebt(storeId, newDebt);
+      const cust = customers.find((c) => c.id === debtData.customerId);
+      if (cust) void upsertCustomer(storeId, { ...cust, totalDebt: cust.totalDebt + debtData.amount });
+    }
+    logAuditAction("Recorded Utang", "debt", newDebt.id, `${debtData.customerName}: ₱${debtData.amount}`);
+    return newDebt;
+  };
+
+  const recordDebtPayment = async (paymentData: {
+    debtId: string;
+    customerId: string;
+    amount: number;
+    paymentMethod: "cash" | "gcash" | "maya" | "other";
+    referenceNumber?: string;
+    note?: string;
+  }) => {
+    const storeId = getStoreId();
+    const now = new Date().toISOString();
+    const debt = debts.find((d) => d.id === paymentData.debtId);
+    if (!debt) return false;
+
+    const newAmountPaid = debt.amountPaid + paymentData.amount;
+    const newBalance = Math.max(0, debt.amount - newAmountPaid);
+    const newStatus = newBalance <= 0 ? ("paid" as const) : ("partial" as const);
+
+    setDebts((prev) =>
+      prev.map((d) =>
+        d.id === paymentData.debtId
+          ? { ...d, amountPaid: newAmountPaid, balance: newBalance, status: newStatus, updatedAt: now }
+          : d
+      )
+    );
+
+    setCustomers((prev) =>
+      prev.map((c) =>
+        c.id === paymentData.customerId
+          ? { ...c, totalDebt: Math.max(0, c.totalDebt - paymentData.amount), updatedAt: now }
+          : c
+      )
+    );
+
+    if (storeId) {
+      void updateDebtPayment(
+        storeId,
+        paymentData.debtId,
+        paymentData.customerId,
+        {
+          amount: paymentData.amount,
+          paymentMethod: paymentData.paymentMethod,
+          referenceNumber: paymentData.referenceNumber,
+          recordedBy: state.user.name || "Cashier",
+          note: paymentData.note,
+        },
+        newAmountPaid,
+        newBalance,
+        newStatus,
+      );
+      const cust = customers.find((c) => c.id === paymentData.customerId);
+      if (cust) {
+        void upsertCustomer(storeId, {
+          ...cust,
+          totalDebt: Math.max(0, cust.totalDebt - paymentData.amount),
+        });
+      }
+    }
+
+    logAuditAction(
+      "Debt Payment",
+      "debt_payment",
+      paymentData.debtId,
+      `Settled ₱${paymentData.amount} via ${paymentData.paymentMethod.toUpperCase()} (Ref: ${paymentData.referenceNumber || "None"})`,
+    );
+    return true;
+  };
+
+  const updateStorePaymentQRs = async (qrs: StorePaymentQRs) => {
+    const storeId = getStoreId();
+    mutate((current) => ({
+      ...current,
+      user: {
+        ...current.user,
+        storeQRs: qrs,
+      },
+    }));
+    if (storeId) {
+      return await updateStoreQRs(storeId, qrs);
+    }
+    return true;
+  };
+
+  const logAuditAction = (action: string, entityType: string, entityId?: string, details?: string) => {
+    const storeId = getStoreId();
+    const log: AuditLog = {
+      id: `audit-${Date.now()}`,
+      storeId,
+      actorId: state.user.id,
+      actorName: state.user.name || "Staff",
+      action,
+      entityType,
+      entityId,
+      details,
+      createdAt: new Date().toISOString(),
+    };
+    setAuditLogs((prev) => [log, ...prev]);
+    if (storeId) void insertAuditLog(storeId, log);
+  };
+
   const value = useMemo<StoreContextValue>(() => {
     const summary = getDashboardSummary(state.products, state.movements, state.notifications);
     const categoryBreakdown = getCategoryBreakdown(state.products);
@@ -479,6 +834,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       recentActivity,
       teamMembers: state.teamMembers,
       sales,
+      customers,
+      debts,
+      auditLogs,
       processCheckout,
       loadSales,
       getProduct,
@@ -522,6 +880,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           products: current.products.filter((product) => product.id !== productId),
         }));
         void removeProduct(productId);
+        logAuditAction("Deleted Product", "product", productId);
       },
 
       markNotificationRead: (notificationId) => {
@@ -606,8 +965,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             member.id === memberId ? { ...member, accessLevel } : member,
           ),
         })),
+
+      addCustomer,
+      updateCustomer,
+      deleteCustomer,
+      addDebt,
+      recordDebtPayment,
+      updateStorePaymentQRs,
+      logAuditAction,
     };
-  }, [state, sales]);
+  }, [state, sales, customers, debts, auditLogs]);
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
