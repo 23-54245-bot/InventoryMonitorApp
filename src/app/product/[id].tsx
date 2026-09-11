@@ -189,6 +189,7 @@ export default function ProductDetailScreen() {
           <InfoRow icon="map-marker" label="Storage Location" value="Not set" theme={theme} />
           <InfoRow icon="account" label="Supplier" value="Not set" theme={theme} />
           <InfoRow icon="package-variant" label="Unit" value={product.unitType} theme={theme} />
+          {product.manufacturingDate ? <InfoRow icon="calendar-clock" label="Manufacturing Date" value={product.manufacturingDate.slice(0, 10)} theme={theme} /> : null}
           {product.expiryDate ? <InfoRow icon="calendar" label="Expiry Date" value={product.expiryDate.slice(0, 10)} theme={theme} /> : null}
         </View>
 
