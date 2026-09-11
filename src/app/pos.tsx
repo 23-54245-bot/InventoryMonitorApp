@@ -185,6 +185,11 @@ export default function PosScreen() {
   const openCheckout = () => {
     if (cart.length === 0) return;
     setAmountTenderedStr(String(cartGrandTotal));
+    // Auto-generate a TXN reference for e-wallet payments
+    const now = new Date();
+    const datePart = now.toISOString().slice(0, 10).replace(/-/g, "");
+    const randPart = Math.random().toString(36).slice(2, 6).toUpperCase();
+    setRefNumber(`TXN-${datePart}-${randPart}`);
     setRefNumber("");
     setCheckoutVisible(true);
   };
@@ -707,11 +712,12 @@ export default function PosScreen() {
 
             <ScrollView contentContainerStyle={{ padding: 16 }}>
               {/* Payment Methods */}
-              {/* Payment Methods */}
               <View style={styles.paymentMethodRow}>
                 {([
                   { key: "cash", label: translate(language, "cash"), icon: "cash" },
                   { key: "e_wallet", label: "GCash / Maya", icon: "cellphone-check" },
+                  { key: "credit", label: translate(language, "utang") || "Utang", icon: "book-account-outline" },
+                  { key: "split", label: translate(language, "splitPayment") || "Split", icon: "call-split" },
                   { key: "credit", label: translate(language, "creditUtang") || "Utang (Credit)", icon: "book-account-outline" },
                   { key: "split", label: translate(language, "splitPayment") || "Split Payment", icon: "call-split" },
                   { key: "card", label: translate(language, "card"), icon: "credit-card-outline" },
@@ -731,6 +737,7 @@ export default function PosScreen() {
                   >
                     <MaterialCommunityIcons
                       name={m.icon as any}
+                      size={24}
                       size={22}
                       color={paymentMethod === m.key ? theme.colors.primary : theme.colors.onSurfaceVariant}
                     />
@@ -952,6 +959,7 @@ export default function PosScreen() {
 
                   <View style={styles.formRow}>
                     <Text style={[styles.inputLabel, { color: theme.colors.onSurface }]}>
+                      {translate(language, "paymentRefNumber") || "Payment Reference Number"}
                       Payment Reference Number (Optional)
                     </Text>
                     <TextInput
@@ -1486,22 +1494,29 @@ const styles = StyleSheet.create({
   },
   paymentMethodRow: {
     flexDirection: "row",
+    gap: 8,
     flexWrap: "wrap",
     justifyContent: "space-between",
     rowGap: 10,
     columnGap: 10,
     marginBottom: 16,
+    flexWrap: "wrap",
   },
   paymentMethodCard: {
+    flex: 1,
+    width: "30%",
     width: "48%",
     flexDirection: "row",
     alignItems: "center",
+    padding: 10,
+    borderRadius: 10,
     paddingVertical: 12,
     paddingHorizontal: 12,
     borderRadius: 12,
     borderWidth: 1.5,
     gap: 8,
   },
+  paymentMethodText: { fontSize: 11, fontWeight: "700", marginTop: 4, textAlign: "center" },
   paymentMethodText: {
     fontSize: 13,
     fontWeight: "700",
