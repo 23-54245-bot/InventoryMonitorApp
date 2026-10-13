@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
     Alert,
     KeyboardAvoidingView,
@@ -39,7 +39,8 @@ export function AddBatchModal({
 }: AddBatchModalProps) {
   const theme = useTheme();
   const { batches, addBatch, deleteBatch } = useStore();
-  const [currentTime] = useState(() => Date.now());
+  const [currentTime, setCurrentTime] = useState<number | null>(null);
+
   const [batchNumber, setBatchNumber] = useState("");
   const [quantityStr, setQuantityStr] = useState("");
   const [expiryDate, setExpiryDate] = useState(() => {
@@ -51,6 +52,12 @@ export function AddBatchModal({
     product.unitPrice ? String(product.unitPrice) : ""
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!visible) return;
+    const timer = setTimeout(() => setCurrentTime(Date.now()), 0);
+    return () => clearTimeout(timer);
+  }, [visible]);
 
   const productBatches = batches.filter((b) => b.productId === product.id);
 

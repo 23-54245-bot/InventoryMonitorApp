@@ -217,7 +217,7 @@ export function WalkthroughOverlay() {
                 onPress={handleDismiss}
                 style={styles.actionBtn}
               >
-                {translate(language, "skip") || "Skip"}
+                {translate(language, "walkthroughSkip") || "Skip"}
               </Button>
 
               <View style={styles.navButtons}>
@@ -228,7 +228,7 @@ export function WalkthroughOverlay() {
                     style={styles.actionBtn}
                     textColor={theme.colors.onSurface}
                   >
-                    {translate(language, "back") || "Back"}
+                    {translate(language, "walkthroughBack") || "Back"}
                   </Button>
                 ) : null}
 
@@ -240,8 +240,8 @@ export function WalkthroughOverlay() {
                   style={styles.actionBtn}
                 >
                   {isLastStep
-                    ? translate(language, "gotIt") || "Got it!"
-                    : translate(language, "next") || "Next"}
+                    ? translate(language, "walkthroughGotIt") || "Got it!"
+                    : translate(language, "walkthroughNext") || "Next"}
                 </Button>
               </View>
             </View>
