@@ -8,6 +8,7 @@ import Svg, { Circle } from "react-native-svg";
 
 import { ScreenContainer } from "../../components/screen-container";
 import { TrendLegend, TrendLineChart } from "../../components/trend-line-chart";
+import { WalkthroughOverlay } from "../../components/walkthrough-overlay";
 import { useAuth } from "../../context/auth";
 import { useStore } from "../../context/store";
 import { formatRelativeTime, getLowStockProducts, getSafetyStockStatus } from "../../data/freshmart";
@@ -383,6 +384,7 @@ export default function HomeScreen() {
         </View>
       </ScreenContainer>
 
+      <WalkthroughOverlay />
     </View>
   );
 }

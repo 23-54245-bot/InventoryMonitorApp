@@ -1,53 +1,96 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import type { Href } from "expo-router";
+import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { Modal, StyleSheet, View } from "react-native";
-import { Button, Card, ProgressBar, Text, useTheme } from "react-native-paper";
+import { Modal, ScrollView, StyleSheet, View } from "react-native";
+import { Button, Card, Divider, ProgressBar, Surface, Text, useTheme } from "react-native-paper";
 
-type WalkthroughStep = {
+import { useStore } from "../context/store";
+import { translate } from "../lib/i18n";
+
+export type WalkthroughStep = {
   icon: string;
   title: string;
-  description: string;
   targetHint: string;
+  whatIsIt: string;
+  howToDoIt: string;
+  actionRoute?: Href;
+  actionLabel?: string;
 };
 
-const STEPS: WalkthroughStep[] = [
+export const STEPS: WalkthroughStep[] = [
   {
     icon: "storefront-outline",
-    title: "Welcome to StockTrack!",
-    description: "Your simple, real-time inventory and point-of-sale companion. Let us show you around in 4 quick steps.",
-    targetHint: "Store Overview",
+    title: "Your Live Store Command Center",
+    targetHint: "Store Overview & Live KPIs",
+    whatIsIt: "A real-time dashboard displaying total inventory, items in stock, low-stock warnings, and weekly sales activity at a glance.",
+    howToDoIt: "Review the KPI cards at the top every morning. Tap low-stock alerts to reorder immediately before your shelves run empty.",
   },
   {
-    icon: "barcode-scan",
-    title: "Fast Barcode Scanner",
-    description: "Tap the barcode icon at the top to scan items with your phone or laptop camera for instant lookups.",
-    targetHint: "Top Header Bar",
+    icon: "cash-register",
+    title: "Cash Register & Barcode POS",
+    targetHint: "Fast Retail Checkout",
+    whatIsIt: "High-speed point of sale designed for sari-sari stores and groceries. Supports barcode scanning, cash tender, GCash/Maya QR codes, split payments, and voiding.",
+    howToDoIt: "1. Scan or tap items to build cart → 2. Tap Charge / Checkout → 3. Select Cash or E-Wallet QR and tender amount → 4. Print or share receipt!",
+    actionRoute: "/pos",
+    actionLabel: "Try POS Register",
   },
   {
-    icon: "plus-circle-outline",
-    title: "Quick Action Hub (+)",
-    description: "Tap the floating (+) button at the bottom right to quickly record deliveries, deduct damaged stock, or add products.",
-    targetHint: "Bottom Right (+) Button",
+    icon: "package-variant-closed",
+    title: "Smart Shelf, FEFO Batches & Tingi",
+    targetHint: "Inventory & Lot Tracking",
+    whatIsIt: "Manage every product with FEFO expiry tracking (First Expired, First Out) and Tingi fractional selling (selling bulk boxes by individual stick or sachet).",
+    howToDoIt: "Open any product in Inventory → Tap 'FEFO Batches' to add lot numbers and expiry dates, or tap 'Tingi Config' to set unit splitting and calculate extra profits.",
+    actionRoute: "/(tabs)/inventory",
+    actionLabel: "Explore Inventory",
   },
   {
-    icon: "view-dashboard-outline",
-    title: "Simple Navigation",
-    description: "Use the bottom tab bar (or the left sidebar on desktop) to manage your inventory shelf, check low-stock alerts, and view reports.",
-    targetHint: "Bottom Bar / Left Sidebar",
+    icon: "book-open-page-variant-outline",
+    title: "Digital Lista & Customer Loyalty",
+    targetHint: "Credit (Utang) & Rewards",
+    whatIsIt: "A trustworthy digital ledger for customer credit (utang) balances, payment recording, and automatic ⭐ Loyalty Points cashback rewards.",
+    howToDoIt: "Open Credit Tracker → Tap 'Record Utang' with items and due date. When customers shop, they earn loyalty points that convert into instant discounts at checkout!",
+    actionRoute: "/utang",
+    actionLabel: "Open Credit Tracker",
+  },
+  {
+    icon: "cash-multiple",
+    title: "Cash Drawer Shifts & Balancing",
+    targetHint: "Register Accountability",
+    whatIsIt: "End-of-day register reconciliation. Declare starting morning float cash and verify closing cash to prevent theft or cashier errors.",
+    howToDoIt: "Go to Profile → Store tab → Tap 'Start Shift' with your starting fund (₱500). At closing, physically count your drawer cash to view the automatic variance calculation.",
+    actionRoute: "/(tabs)/profile",
+    actionLabel: "View Shift Settings",
+  },
+  {
+    icon: "truck-delivery-outline",
+    title: "Purchase Orders & Stock Inflow",
+    targetHint: "Supplier Deliveries",
+    whatIsIt: "Intake incoming distributor shipments (San Miguel, Coca-Cola, URC) and batch-update your stock in seconds.",
+    howToDoIt: "Open Purchase Orders from the (+) Quick Menu → Enter supplier and invoice number → Search items, enter quantities and costs → Tap 'Confirm & Receive'.",
+    actionRoute: "/purchase-order",
+    actionLabel: "Open Purchase Orders",
   },
   {
     icon: "help-circle-outline",
-    title: "Guides Whenever You Need",
-    description: "Tap the '?' icon at the top of your dashboard anytime to open plain step-by-step guides for all features.",
-    targetHint: "Help & Tutorials",
+    title: "24/7 User Manual & Guides",
+    targetHint: "Guides & Tutorials",
+    whatIsIt: "A complete offline-ready searchable user manual explaining every button, report, and calculation.",
+    howToDoIt: "Tap the Help '?' icon in the dashboard header or replay this interactive walkthrough anytime from the Help screen!",
+    actionRoute: "/help",
+    actionLabel: "Open Help Manual",
   },
 ];
 
-const STORAGE_KEY = "hasSeenOnboarding";
+export const STORAGE_KEY = "hasSeenOnboarding";
 
 export function WalkthroughOverlay() {
   const theme = useTheme();
+  const router = useRouter();
+  const { state } = useStore();
+  const language = state.user.preferences?.language ?? "English";
+
   const [visible, setVisible] = useState(false);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
 
@@ -86,6 +129,12 @@ export function WalkthroughOverlay() {
     }
   };
 
+  const handleAction = async (route?: Href) => {
+    if (!route) return;
+    await handleDismiss();
+    router.push(route);
+  };
+
   if (!visible) {
     return null;
   }
@@ -99,9 +148,9 @@ export function WalkthroughOverlay() {
       <View style={styles.backdrop}>
         <Card style={[styles.dialogCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}>
           <Card.Content style={styles.cardContent}>
-            {/* Header progress bar */}
+            {/* Header progress info */}
             <View style={styles.topRow}>
-              <View style={[styles.hintPill, { backgroundColor: `${theme.colors.primary}14` }]}>
+              <View style={[styles.hintPill, { backgroundColor: `${theme.colors.primary}18` }]}>
                 <Text style={[styles.hintPillText, { color: theme.colors.primary }]}>
                   {step.targetHint}
                 </Text>
@@ -113,18 +162,52 @@ export function WalkthroughOverlay() {
 
             <ProgressBar progress={progress} color={theme.colors.primary} style={styles.progressBar} />
 
-            {/* Step illustration icon */}
-            <View style={[styles.iconWrap, { backgroundColor: `${theme.colors.primary}14` }]}>
-              <MaterialCommunityIcons name={step.icon as any} size={42} color={theme.colors.primary} />
-            </View>
+            <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
+              {/* Step illustration icon */}
+              <View style={[styles.iconWrap, { backgroundColor: `${theme.colors.primary}18` }]}>
+                <MaterialCommunityIcons name={step.icon as any} size={36} color={theme.colors.primary} />
+              </View>
 
-            {/* Title & conversational description */}
-            <Text style={[styles.stepTitle, { color: theme.colors.onSurface }]}>
-              {step.title}
-            </Text>
-            <Text style={[styles.stepDescription, { color: theme.colors.onSurfaceVariant }]}>
-              {step.description}
-            </Text>
+              {/* Title */}
+              <Text style={[styles.stepTitle, { color: theme.colors.onSurface }]}>
+                {step.title}
+              </Text>
+
+              {/* What is it section */}
+              <Surface style={[styles.infoBlock, { backgroundColor: theme.colors.surfaceVariant }]}>
+                <Text style={[styles.sectionHeading, { color: theme.colors.primary }]}>
+                  📌 What it is:
+                </Text>
+                <Text style={[styles.sectionBody, { color: theme.colors.onSurface }]}>
+                  {step.whatIsIt}
+                </Text>
+              </Surface>
+
+              {/* How to use it section */}
+              <Surface style={[styles.infoBlock, { backgroundColor: theme.colors.surfaceVariant, marginTop: 8 }]}>
+                <Text style={[styles.sectionHeading, { color: theme.colors.primary }]}>
+                  🚀 How to do it:
+                </Text>
+                <Text style={[styles.sectionBody, { color: theme.colors.onSurface }]}>
+                  {step.howToDoIt}
+                </Text>
+              </Surface>
+
+              {/* Direct interactive "Try It Now" button */}
+              {step.actionRoute && step.actionLabel ? (
+                <Button
+                  mode="contained-tonal"
+                  icon="arrow-right-circle-outline"
+                  onPress={() => handleAction(step.actionRoute)}
+                  style={styles.actionJumpBtn}
+                  textColor={theme.colors.primary}
+                >
+                  {step.actionLabel}
+                </Button>
+              ) : null}
+            </ScrollView>
+
+            <Divider style={{ marginVertical: 10 }} />
 
             {/* Actions row */}
             <View style={styles.actionsRow}>
@@ -134,7 +217,7 @@ export function WalkthroughOverlay() {
                 onPress={handleDismiss}
                 style={styles.actionBtn}
               >
-                Skip
+                {translate(language, "skip") || "Skip"}
               </Button>
 
               <View style={styles.navButtons}>
@@ -145,17 +228,20 @@ export function WalkthroughOverlay() {
                     style={styles.actionBtn}
                     textColor={theme.colors.onSurface}
                   >
-                    Back
+                    {translate(language, "back") || "Back"}
                   </Button>
                 ) : null}
 
                 <Button
                   mode="contained"
                   buttonColor={theme.colors.primary}
+                  textColor="#FFFFFF"
                   onPress={handleNext}
                   style={styles.actionBtn}
                 >
-                  {isLastStep ? "Got it!" : "Next"}
+                  {isLastStep
+                    ? translate(language, "gotIt") || "Got it!"
+                    : translate(language, "next") || "Next"}
                 </Button>
               </View>
             </View>
@@ -169,88 +255,93 @@ export function WalkthroughOverlay() {
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.72)",
+    backgroundColor: "rgba(0, 0, 0, 0.65)",
     justifyContent: "center",
     alignItems: "center",
-    padding: 20,
+    padding: 18,
   },
   dialogCard: {
-    maxWidth: 440,
     width: "100%",
+    maxWidth: 480,
+    maxHeight: "88%",
     borderRadius: 20,
     borderWidth: 1,
-    elevation: 8,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.16,
-    shadowRadius: 16,
+    elevation: 10,
   },
   cardContent: {
-    padding: 24,
-    alignItems: "center",
+    padding: 20,
   },
   topRow: {
-    width: "100%",
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 10,
+    alignItems: "center",
+    marginBottom: 8,
   },
   hintPill: {
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 999,
+    borderRadius: 12,
   },
   hintPillText: {
     fontSize: 11,
     fontWeight: "700",
     textTransform: "uppercase",
-    letterSpacing: 0.4,
   },
   stepCountText: {
     fontSize: 12,
     fontWeight: "600",
   },
   progressBar: {
-    width: "100%",
     height: 4,
     borderRadius: 2,
-    marginBottom: 20,
+    marginBottom: 12,
+  },
+  scrollArea: {
+    maxHeight: 380,
   },
   iconWrap: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 16,
+    alignSelf: "center",
+    marginBottom: 10,
   },
   stepTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "800",
     textAlign: "center",
-    marginBottom: 8,
+    marginBottom: 12,
   },
-  stepDescription: {
-    fontSize: 14,
-    lineHeight: 22,
-    textAlign: "center",
-    marginBottom: 24,
+  infoBlock: {
+    padding: 12,
+    borderRadius: 12,
+  },
+  sectionHeading: {
+    fontSize: 12,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    marginBottom: 4,
+  },
+  sectionBody: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  actionJumpBtn: {
+    marginTop: 10,
+    borderRadius: 12,
   },
   actionsRow: {
-    width: "100%",
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
-  },
-  navButtons: {
-    flexDirection: "row",
     alignItems: "center",
-    gap: 8,
   },
   actionBtn: {
     borderRadius: 10,
-    minHeight: 44,
-    justifyContent: "center",
+  },
+  navButtons: {
+    flexDirection: "row",
+    gap: 8,
   },
 });
