@@ -2,14 +2,18 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Camera } from "expo-camera";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
+import type { Href } from "expo-router";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
 import { Button, Chip, Divider, IconButton, Text, TextInput, useTheme } from "react-native-paper";
 import Animated, { FadeInUp } from "react-native-reanimated";
 
 import { useStore } from "../context/store";
+import { useBreakpoint } from "../hooks/useBreakpoint";
 import { showAlert } from "../lib/alert";
+import { generateProductSku } from "../lib/barcode";
+import { translate } from "../lib/i18n";
 
 function generateUUID(): string {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -38,14 +42,17 @@ function getOffsetDate(days: number): string {
 
 export default function AddProductScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ id?: string }>();
-  const { addProduct, updateProduct, getProduct } = useStore();
+  const params = useLocalSearchParams<{ id?: string; sku?: string; name?: string }>();
+  const { state, addProduct, updateProduct, getProduct } = useStore();
   const theme = useTheme();
+  const language = state.user.preferences?.language ?? "English";
+  const breakpoint = useBreakpoint();
+  const isDesktop = breakpoint !== "mobile";
   const product = params.id ? getProduct(String(params.id)) : undefined;
   const isEditMode = Boolean(product);
 
-  const [name, setName] = useState(product?.name ?? "");
-  const [sku, setSku] = useState(product?.sku ?? "");
+  const [name, setName] = useState(product?.name ?? String(params.name ?? ""));
+  const [sku, setSku] = useState(product?.sku ?? String(params.sku ?? ""));
   const [category, setCategory] = useState(product?.category ?? "");
   const [unitType, setUnitType] = useState(product?.unitType ?? "pcs");
   const [currentStock, setCurrentStock] = useState(String(product?.currentStock ?? 0));
@@ -55,13 +62,13 @@ export default function AddProductScreen() {
   const [srpPrice, setSrpPrice] = useState(String(product?.srpPrice ?? ""));
   const [location, setLocation] = useState("");
   const [supplier, setSupplier] = useState("");
-  const [icon, setIcon] = useState(product?.icon ?? "📦");
+  const icon = product?.icon ?? "📦";
   const [imageUri, setImageUri] = useState(product?.imageUri ?? undefined);
   const [manufacturingDate, setManufacturingDate] = useState(product?.manufacturingDate ? product.manufacturingDate.slice(0, 10) : "");
   const [expiryDate, setExpiryDate] = useState(product?.expiryDate ? product.expiryDate.slice(0, 10) : "");
   const [datePickerTarget, setDatePickerTarget] = useState<"mfg" | "expiry" | null>(null);
 
-  const goBack = () => (router.canGoBack() ? router.back() : router.replace("/(tabs)/inventory" as any));
+  const goBack = () => (router.canGoBack() ? router.back() : router.replace("/(tabs)/inventory" as Href));
 
   const pickImage = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -84,7 +91,7 @@ export default function AddProductScreen() {
   const takePhoto = async () => {
     const permission = await Camera.requestCameraPermissionsAsync();
     if (!permission.granted) {
-      showAlert("Camera Access Needed", "Allow camera access in your phone settings to take a product photo.");
+      showAlert(translate(language, "cameraAccessNeededTitle"), translate(language, "cameraAccessNeededMsg"));
       return;
     }
 
@@ -100,7 +107,7 @@ export default function AddProductScreen() {
         setImageUri(result.assets[0].uri);
       }
     } catch {
-      showAlert("Camera Unavailable", "The camera could not be opened. Close and reopen Expo Go, then try again.");
+      showAlert(translate(language, "cameraUnavailableTitle"), translate(language, "cameraUnavailableMsg"));
     }
   };
 
@@ -109,7 +116,7 @@ export default function AddProductScreen() {
       const nextName = name.trim() || "New Product";
       const nextCategory = category.trim() || "General";
       const nextUnit = unitType.trim() || "pcs";
-      const nextSku = sku.trim() || `NEW-${Date.now()}`;
+      const nextSku = sku.trim() || generateProductSku();
       const nextCostPrice = Number(costPrice) || 0;
       const nextSrpPrice = Number(srpPrice) || undefined;
       const nextCurrentStock = Number(currentStock) || 0;
@@ -158,25 +165,25 @@ export default function AddProductScreen() {
       goBack();
     } catch (err: any) {
       console.error("Save product error:", err);
-      showAlert("Error Saving Product", err?.message ?? "An unexpected error occurred while saving.");
+      showAlert(translate(language, "errorSavingProductTitle"), err?.message ?? translate(language, "unexpectedSaveError"));
     }
   };
 
   return (
     <View style={[styles.page, { backgroundColor: theme.colors.background }]}> 
-      <View style={[styles.header, { backgroundColor: theme.colors.primary }]}> 
+      <View style={[styles.header, { backgroundColor: theme.colors.primary }, isDesktop && styles.desktopHeader]}> 
         <TouchableOpacity style={styles.headerButton} onPress={goBack}>
           <MaterialCommunityIcons name="arrow-left" size={18} color={theme.colors.onPrimary} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: theme.colors.onPrimary }]}>{isEditMode ? "Edit Product" : "Add Product"}</Text>
+        <Text style={[styles.headerTitle, { color: theme.colors.onPrimary }]}>{isEditMode ? translate(language, "editProductTitle") : translate(language, "addProductTitle")}</Text>
         <TouchableOpacity style={[styles.headerButton, { backgroundColor: theme.colors.surface }]} onPress={onSave}>
           <MaterialCommunityIcons name="content-save" size={16} color={theme.colors.primary} />
         </TouchableOpacity>
       </View>
 
       <KeyboardAvoidingView style={styles.form} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-        <Animated.View entering={FadeInUp.duration(350)} style={[styles.heroCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}> 
+      <ScrollView contentContainerStyle={[styles.content, isDesktop && styles.desktopContent]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        <Animated.View entering={FadeInUp.duration(350)} style={[styles.heroCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }, isDesktop && styles.desktopCard]}> 
           <View style={styles.avatarEditRow}>
             <View style={styles.imageWrap}>
               {imageUri ? (
@@ -186,16 +193,16 @@ export default function AddProductScreen() {
               )}
             </View>
             <View style={styles.avatarActionsCol}>
-              <Button mode="contained-tonal" icon="image-outline" compact onPress={pickImage} style={styles.avatarActionButton} labelStyle={styles.avatarActionLabel}>Upload Photo</Button>
-              <Button mode="outlined" icon="camera-outline" compact onPress={takePhoto} style={styles.avatarActionButton} labelStyle={styles.avatarActionLabel}>Take Photo</Button>
+              <Button mode="contained-tonal" icon="image-outline" compact onPress={pickImage} style={styles.avatarActionButton} labelStyle={styles.avatarActionLabel}>{translate(language, "uploadPhotoButton")}</Button>
+              <Button mode="outlined" icon="camera-outline" compact onPress={takePhoto} style={styles.avatarActionButton} labelStyle={styles.avatarActionLabel}>{translate(language, "takePhotoButton")}</Button>
             </View>
           </View>
 
-          <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Product Information</Text>
+          <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>{translate(language, "productInformationLabel")}</Text>
 
           <TextInput
             mode="outlined"
-            label="Product Name"
+            label={translate(language, "productName")}
             value={name}
             onChangeText={setName}
             style={styles.input}
@@ -204,16 +211,21 @@ export default function AddProductScreen() {
           />
           <TextInput
             mode="outlined"
-            label="SKU"
+            label={translate(language, "productSku")}
             value={sku}
             onChangeText={setSku}
             style={styles.input}
             outlineColor={theme.colors.outline}
             left={<TextInput.Icon icon="barcode" />}
           />
+          {!sku.trim() ? (
+            <Button mode="text" compact icon="auto-fix" onPress={() => setSku(generateProductSku())} style={styles.generateSkuButton}>
+              {translate(language, "generateSkuButton")}
+            </Button>
+          ) : null}
           <TextInput
             mode="outlined"
-            label="Category"
+            label={translate(language, "productCategory")}
             value={category}
             onChangeText={setCategory}
             style={styles.input}
@@ -223,7 +235,7 @@ export default function AddProductScreen() {
           <View style={styles.fieldRow}>
             <TextInput
               mode="outlined"
-              label="Unit"
+              label={translate(language, "unitLabel")}
               value={unitType}
               onChangeText={setUnitType}
               style={[styles.input, styles.inlineInput]}
@@ -231,7 +243,7 @@ export default function AddProductScreen() {
             />
             <TextInput
               mode="outlined"
-              label="Supplier"
+              label={translate(language, "supplierLabel")}
               value={supplier}
               onChangeText={setSupplier}
               style={[styles.input, styles.inlineInput]}
@@ -240,25 +252,27 @@ export default function AddProductScreen() {
           </View>
         </Animated.View>
 
-        <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}> 
-          <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Stock & Pricing</Text>
+        <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }, isDesktop && styles.desktopCard]}> 
+          <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>{translate(language, "stockAndPricingLabel")}</Text>
 
           <View style={styles.fieldRow}>
             <TextInput
               mode="outlined"
-              label="Current Stock"
+              label={translate(language, "currentStockLabel")}
               value={currentStock}
               onChangeText={setCurrentStock}
               keyboardType="numeric"
+              selectTextOnFocus
               style={[styles.input, styles.inlineInput]}
               outlineColor={theme.colors.outline}
             />
             <TextInput
               mode="outlined"
-              label="Max Stock"
+              label={translate(language, "maxStockLabel")}
               value={maxStock}
               onChangeText={setMaxStock}
               keyboardType="numeric"
+              selectTextOnFocus
               style={[styles.input, styles.inlineInput]}
               outlineColor={theme.colors.outline}
             />
@@ -267,7 +281,7 @@ export default function AddProductScreen() {
           <View style={styles.fieldRow}>
             <TextInput
               mode="outlined"
-              label="Min Stock"
+              label={translate(language, "minStockLabel")}
               value={minStock}
               onChangeText={setMinStock}
               keyboardType="numeric"
@@ -276,7 +290,7 @@ export default function AddProductScreen() {
             />
             <TextInput
               mode="outlined"
-              label="Location"
+              label={translate(language, "locationLabel")}
               value={location}
               onChangeText={setLocation}
               style={[styles.input, styles.inlineInput]}
@@ -287,7 +301,7 @@ export default function AddProductScreen() {
           <View style={styles.fieldRow}>
             <TextInput
               mode="outlined"
-              label="Cost Price"
+              label={translate(language, "costPriceLabel")}
               value={costPrice}
               onChangeText={setCostPrice}
               keyboardType="decimal-pad"
@@ -296,7 +310,7 @@ export default function AddProductScreen() {
             />
             <TextInput
               mode="outlined"
-              label="Selling Price"
+              label={translate(language, "sellingPriceLabel")}
               value={srpPrice}
               onChangeText={setSrpPrice}
               keyboardType="decimal-pad"
@@ -306,11 +320,11 @@ export default function AddProductScreen() {
           </View>
         </View>
 
-        <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}>
-          <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>Manufacturing & Expiry Dates</Text>
+        <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }, isDesktop && styles.desktopCard]}>
+          <Text style={[styles.sectionLabel, { color: theme.colors.onSurfaceVariant }]}>{translate(language, "mfgAndExpirySection")}</Text>
 
           {/* Manufacturing Date */}
-          <Text style={[styles.fieldSubLabel, { color: theme.colors.onSurface }]}>Manufacturing Date</Text>
+          <Text style={[styles.fieldSubLabel, { color: theme.colors.onSurface }]}>{translate(language, "manufacturingDateLabel")}</Text>
           <TextInput
             mode="outlined"
             placeholder="YYYY-MM-DD (e.g. 2026-04-10)"
@@ -327,18 +341,18 @@ export default function AddProductScreen() {
             }
           />
           <View style={styles.quickDateRow}>
-            <Chip compact style={styles.quickChip} onPress={() => setManufacturingDate(getTodayDate())}>Today</Chip>
-            <Chip compact style={styles.quickChip} onPress={() => setManufacturingDate(getOffsetDate(-7))}>1 wk ago</Chip>
-            <Chip compact style={styles.quickChip} onPress={() => setManufacturingDate(getOffsetDate(-30))}>1 mo ago</Chip>
+            <Chip compact style={styles.quickChip} onPress={() => setManufacturingDate(getTodayDate())}>{translate(language, "todayPreset")}</Chip>
+            <Chip compact style={styles.quickChip} onPress={() => setManufacturingDate(getOffsetDate(-7))}>{translate(language, "oneWeekAgo")}</Chip>
+            <Chip compact style={styles.quickChip} onPress={() => setManufacturingDate(getOffsetDate(-30))}>{translate(language, "oneMonthAgo")}</Chip>
             {manufacturingDate ? (
               <Chip compact icon="close" style={styles.quickChip} onPress={() => setManufacturingDate("")}>
-                Clear
+                {translate(language, "clearDate")}
               </Chip>
             ) : null}
           </View>
 
           {/* Expiry Date */}
-          <Text style={[styles.fieldSubLabel, { color: theme.colors.onSurface, marginTop: 14 }]}>Expiry Date</Text>
+          <Text style={[styles.fieldSubLabel, { color: theme.colors.onSurface, marginTop: 14 }]}>{translate(language, "expiryDateLabel")}</Text>
           <TextInput
             mode="outlined"
             placeholder="YYYY-MM-DD (e.g. 2026-10-15)"
@@ -361,7 +375,7 @@ export default function AddProductScreen() {
             <Chip compact style={styles.quickChip} onPress={() => setExpiryDate(getOffsetDate(730))}>+2 Yrs</Chip>
             {expiryDate ? (
               <Chip compact icon="close" style={styles.quickChip} onPress={() => setExpiryDate("")}>
-                No Expiry
+                {translate(language, "noExpiry")}
               </Chip>
             ) : null}
           </View>
@@ -369,16 +383,17 @@ export default function AddProductScreen() {
 
         <View style={styles.footerRow}>
           <Button mode="outlined" onPress={goBack} style={styles.cancelActionButton}>
-            Cancel
+            {translate(language, "cancelButton")}
           </Button>
           <Button mode="contained" onPress={onSave} style={[styles.primaryButton, { backgroundColor: theme.colors.primary }]} labelStyle={styles.primaryButtonLabel}>
-            {isEditMode ? "Save Changes" : "Save Product"}
+            {isEditMode ? translate(language, "saveChangesButton") : translate(language, "saveProductButton")}
           </Button>
         </View>
       </ScrollView>
       </KeyboardAvoidingView>
 
       <DatePickerModal
+        key={datePickerTarget ? `${datePickerTarget}:${datePickerTarget === "mfg" ? manufacturingDate : expiryDate}` : "closed"}
         visible={Boolean(datePickerTarget)}
         title={datePickerTarget === "mfg" ? "Select Manufacturing Date" : "Select Expiry Date"}
         currentValue={datePickerTarget === "mfg" ? manufacturingDate : expiryDate}
@@ -424,6 +439,22 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 32,
   },
+  desktopHeader: {
+    maxWidth: 720,
+    width: "100%",
+    alignSelf: "center",
+    borderRadius: 16,
+    marginTop: 16,
+    paddingTop: 16,
+  },
+  desktopContent: {
+    alignItems: "center",
+    paddingVertical: 20,
+  },
+  desktopCard: {
+    maxWidth: 720,
+    width: "100%",
+  },
   heroCard: {
     borderRadius: 24,
     borderWidth: 1,
@@ -461,6 +492,7 @@ const styles = StyleSheet.create({
   avatarActionLabel: {
     fontSize: 12,
   },
+  generateSkuButton: { alignSelf: "flex-start", marginTop: -8, marginBottom: 8 },
   sectionLabel: {
     fontSize: 12,
     fontWeight: "700",
@@ -469,10 +501,11 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   card: {
-    borderRadius: 24,
+    borderRadius: 16,
     borderWidth: 1,
     padding: 18,
     marginTop: 16,
+    elevation: 0,
   },
   input: {
     marginBottom: 12,
@@ -505,12 +538,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   primaryButtonLabel: {
-    fontSize: 14,
-    fontWeight: "700",
+    fontSize: 15,
+    fontWeight: "600",
   },
   fieldSubLabel: {
     fontSize: 13,
-    fontWeight: "700",
+    fontWeight: "600",
     marginBottom: 6,
   },
   quickDateRow: {
@@ -522,6 +555,7 @@ const styles = StyleSheet.create({
   },
   quickChip: {
     marginRight: 4,
+    borderRadius: 8,
   },
   modalBackdrop: {
     flex: 1,
@@ -533,9 +567,11 @@ const styles = StyleSheet.create({
   dateModalCard: {
     width: "100%",
     maxWidth: 340,
-    borderRadius: 20,
+    borderRadius: 24,
     padding: 16,
-    elevation: 6,
+    elevation: 8,
+    boxShadow: "0px 4px 12px rgba(0,0,0,0.15)",
+    borderWidth: 0,
   },
   dateModalHeader: {
     flexDirection: "row",
@@ -618,19 +654,11 @@ function DatePickerModal({
     }
     const today = new Date();
     return { year: today.getFullYear(), month: today.getMonth(), day: today.getDate() };
-  }, [currentValue, visible]);
+  }, [currentValue]);
 
   const [viewYear, setViewYear] = useState(initial.year);
   const [viewMonth, setViewMonth] = useState(initial.month);
   const [selectedDay, setSelectedDay] = useState(initial.day);
-
-  useEffect(() => {
-    if (visible) {
-      setViewYear(initial.year);
-      setViewMonth(initial.month);
-      setSelectedDay(initial.day);
-    }
-  }, [visible, initial]);
 
   const monthNames = [
     "January", "February", "March", "April", "May", "June",

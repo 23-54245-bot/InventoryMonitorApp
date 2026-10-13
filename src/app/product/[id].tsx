@@ -1,14 +1,19 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import type { Href } from "expo-router";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Alert, ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
 import { Button, Chip, Text, useTheme } from "react-native-paper";
 import Animated, { FadeInUp, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 
+import { PriceTagModal } from "../../components/print/PriceTagModal";
 import { useAuth } from "../../context/auth";
 import { useStore } from "../../context/store";
+import type { Product } from "../../data/freshmart";
 import { getCurrency, getExpiryStatus, getProductStatus } from "../../data/freshmart";
+import { generateProductSku } from "../../lib/barcode";
+import { translate } from "../../lib/i18n";
 
 const statusColors = {
   healthy: { background: "#dcfce7", color: "#16a34a" },
@@ -45,7 +50,8 @@ export default function ProductDetailScreen() {
   const params = useLocalSearchParams<{ id?: string }>();
   const theme = useTheme();
   const { session } = useAuth();
-  const { getProduct, deleteProduct } = useStore();
+  const { state, getProduct, updateProduct, deleteProduct } = useStore();
+  const [labelProduct, setLabelProduct] = useState<Product | null>(null);
   const product = params.id ? getProduct(String(params.id)) : undefined;
 
   const stockPercentSafe = product ? Math.round(Math.min(product.currentStock / Math.max(product.maxStock, 1), 1) * 100) : 0;
@@ -53,7 +59,7 @@ export default function ProductDetailScreen() {
 
   useEffect(() => {
     stockFillWidth.value = withTiming(stockPercentSafe, { duration: 600 });
-  }, [stockPercentSafe]);
+  }, [stockFillWidth, stockPercentSafe]);
 
   const stockFillStyle = useAnimatedStyle(() => ({
     width: `${stockFillWidth.value}%`,
@@ -78,7 +84,7 @@ export default function ProductDetailScreen() {
   const expiry = getExpiryStatus(product);
   const daysUntilExpiry = expiry.daysLeft;
 
-  const closeProduct = () => (router.canGoBack() ? router.back() : router.replace("/(tabs)/inventory" as any));
+  const closeProduct = () => (router.canGoBack() ? router.back() : router.replace("/(tabs)/inventory" as Href));
 
   const removeProduct = () => {
     if (session?.role === "Staff") {
@@ -87,6 +93,12 @@ export default function ProductDetailScreen() {
     }
     deleteProduct(product.id);
     closeProduct();
+  };
+
+  const openBarcodeLabel = () => {
+    const sku = product.sku.trim() || generateProductSku();
+    if (!product.sku.trim()) updateProduct(product.id, { sku });
+    setLabelProduct({ ...product, sku });
   };
 
   const actionButtonTint = stockPercent > 50 ? "#16a34a" : stockPercent > 20 ? "#f59e0b" : "#dc2626";
@@ -199,11 +211,15 @@ export default function ProductDetailScreen() {
           {product.expiryDate ? <InfoRow icon="calendar" label="Expiry Date" value={product.expiryDate.slice(0, 10)} theme={theme} /> : null}
         </View>
 
+        <Button mode="outlined" icon="barcode" onPress={openBarcodeLabel} style={styles.printLabelButton}>
+          {translate(state.user.preferences?.language, "printBarcodeSkuLabel")}
+        </Button>
+
         <View style={styles.actionRow}>
           <Button
             mode="contained"
             icon="arrow-up-right"
-            onPress={() => router.push({ pathname: "/stock-movement", params: { type: "in", productId: product.id } } as any)}
+            onPress={() => router.push({ pathname: "/stock-movement", params: { type: "in", productId: product.id } } as Href)}
             style={[styles.actionButton, { flex: 1, backgroundColor: theme.colors.primary }]}
             labelStyle={styles.actionText}
             textColor={theme.colors.onPrimary}
@@ -214,7 +230,7 @@ export default function ProductDetailScreen() {
           <Button
             mode="contained"
             icon="arrow-down-right"
-            onPress={() => router.push({ pathname: "/stock-movement", params: { type: "out", productId: product.id } } as any)}
+            onPress={() => router.push({ pathname: "/stock-movement", params: { type: "out", productId: product.id } } as Href)}
             style={[styles.actionButton, { flex: 1, backgroundColor: theme.colors.primary }]}
             labelStyle={styles.actionText}
             textColor={theme.colors.onPrimary}
@@ -233,6 +249,7 @@ export default function ProductDetailScreen() {
           Delete Product
         </Button>
       </ScrollView>
+      <PriceTagModal product={labelProduct} visible={Boolean(labelProduct)} language={state.user.preferences?.language ?? "English"} onDismiss={() => setLabelProduct(null)} />
     </View>
   );
 }
@@ -443,6 +460,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontSize: 14,
   },
+  printLabelButton: { marginTop: 14 },
   deleteButton: {
     marginTop: 12,
     borderRadius: 16,

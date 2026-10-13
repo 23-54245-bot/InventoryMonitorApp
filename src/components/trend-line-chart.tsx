@@ -1,6 +1,6 @@
 import { useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
-import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useTheme } from "react-native-paper";
 import Svg, { Circle, Line, Path } from "react-native-svg";
 
@@ -26,18 +26,23 @@ function buildSmoothPath(pts: { x: number; y: number }[]) {
 
 export function TrendLineChart({ labels, first, second, third, firstColor, secondColor, thirdColor }: { labels: string[]; first: number[]; second: number[]; third?: number[]; firstColor: string; secondColor: string; thirdColor?: string }) {
   const theme = useTheme();
-  const { width: viewportWidth } = useWindowDimensions();
-  const width = Math.min(Math.max(viewportWidth - 64, 260), 520);
-  const height = 140;
-  const padding = 11;
+  const [containerWidth, setContainerWidth] = useState(0);
+  const width = Math.min(containerWidth, 520);
+  const height = 160;
+  const padding = 12;
+  const axisBand = 24;
+  const plotBottom = height - axisBand;
+  const plotHeight = plotBottom - padding;
   const values = [...first, ...second, ...(third ?? [])];
+  const min = Math.min(...values, 0);
   const max = Math.max(...values, 1);
+  const valueRange = Math.max(max - min, 1);
   const gridLineCount = 3;
 
   const toPoints = (series: number[]) =>
     series.map((value, index) => ({
       x: padding + (index / Math.max(series.length - 1, 1)) * (width - padding * 2),
-      y: height - padding - (value / max) * (height - padding * 2),
+      y: plotBottom - ((value - min) / valueRange) * plotHeight,
     }));
 
   const firstPoints = toPoints(first);
@@ -49,11 +54,11 @@ export function TrendLineChart({ labels, first, second, third, firstColor, secon
   useFocusEffect(useCallback(() => () => setSelection(null), []));
 
   return (
-    <View style={styles.chartWrap}>
-      <View style={styles.svgWrap}>
-      <Svg width={width} height={height}>
+    <View style={styles.chartWrap} onLayout={({ nativeEvent }) => setContainerWidth(Math.round(nativeEvent.layout.width))}>
+      <View style={[styles.svgWrap, { width }]}>
+      {width > 0 ? <Svg width={width} height={height}>
         {Array.from({ length: gridLineCount }).map((_, index) => {
-          const y = padding + (index / (gridLineCount - 1)) * (height - padding * 2);
+          const y = padding + (index / (gridLineCount - 1)) * plotHeight;
           return <Line key={index} x1={padding} x2={width - padding} y1={y} y2={y} stroke={theme.colors.outline} strokeWidth={1} strokeDasharray="4 4" opacity={0.5} />;
         })}
         {thirdPoints.length ? <Path d={buildSmoothPath(thirdPoints)} fill="none" stroke={thirdColor} strokeWidth={2} strokeDasharray="5 5" /> : null}
@@ -62,35 +67,36 @@ export function TrendLineChart({ labels, first, second, third, firstColor, secon
         {firstPoints.map((point, index) => <Circle key={`first-${index}`} cx={point.x} cy={point.y} r={5} fill={firstColor} />)}
         {secondPoints.map((point, index) => <Circle key={`second-${index}`} cx={point.x} cy={point.y} r={5} fill={secondColor} />)}
         {thirdPoints.map((point, index) => <Circle key={`third-${index}`} cx={point.x} cy={point.y} r={3} fill={thirdColor} />)}
-      </Svg>
+      </Svg> : null}
       {firstPoints.map((point, index) => <Pressable key={`first-hit-${index}`} onPress={() => setSelection((current) => current?.index === index && current.series === "in" ? null : { index, series: "in" })} style={[styles.pointHit, { left: point.x - 10, top: point.y - 10 }]} />)}
       {secondPoints.map((point, index) => <Pressable key={`second-hit-${index}`} onPress={() => setSelection((current) => current?.index === index && current.series === "out" ? null : { index, series: "out" })} style={[styles.pointHit, { left: point.x - 10, top: point.y - 10 }]} />)}
       {selectedPoint && selection ? <View style={[styles.tooltip, { left: Math.max(8, Math.min(selectedPoint.x - 42, width - 96)), top: Math.max(6, selectedPoint.y - 78) }]}><Text style={styles.tooltipDay}>{labels[selection.index]}</Text><Text style={[styles.tooltipLine, { color: selection.series === "in" ? firstColor : secondColor }]}>{selection.series === "in" ? "Stock In" : "Stock Out"}: {selection.series === "in" ? first[selection.index] : second[selection.index]}</Text></View> : null}
       </View>
-      <View style={styles.chartLabels}>{labels.map((label) => <Text key={label} style={[styles.dayLabel, { color: theme.colors.onSurfaceVariant }]}>{label}</Text>)}</View>
+      <View style={[styles.chartLabels, { width }]}>{labels.map((label) => <Text key={label} style={[styles.dayLabel, { color: theme.colors.onSurfaceVariant }]}>{label}</Text>)}</View>
     </View>
   );
 }
 
-export function TrendLegend({ firstColor, secondColor, firstLabel = "Stock In", secondLabel = "Stock Out" }: { firstColor: string; secondColor: string; firstLabel?: string; secondLabel?: string }) {
+export function TrendLegend({ firstColor, secondColor, firstLabel = "Stock In", secondLabel = "Stock Out", thirdColor, thirdLabel }: { firstColor: string; secondColor: string; firstLabel?: string; secondLabel?: string; thirdColor?: string; thirdLabel?: string }) {
   const theme = useTheme();
   return (
     <View style={styles.legendRow}>
       <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: firstColor }]} /><Text style={{ color: theme.colors.onSurfaceVariant }}>{firstLabel}</Text></View>
       <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: secondColor }]} /><Text style={{ color: theme.colors.onSurfaceVariant }}>{secondLabel}</Text></View>
+      {thirdColor && thirdLabel ? <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: thirdColor }]} /><Text style={{ color: theme.colors.onSurfaceVariant }}>{thirdLabel}</Text></View> : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  chartWrap: { alignSelf: "center", marginTop: 8 },
+  chartWrap: { width: "100%", alignItems: "center", marginTop: 8 },
   svgWrap: { position: "relative" },
   pointHit: { position: "absolute", width: 20, height: 20 },
   tooltip: { position: "absolute", minWidth: 86, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 14, backgroundColor: "#ffffff", shadowColor: "#19324a", shadowOpacity: 0.16, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 4 },
   tooltipDay: { color: "#19324a", fontSize: 12, fontWeight: "700", marginBottom: 4 },
   tooltipLine: { fontSize: 11, lineHeight: 17 },
-  chartLabels: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 8 },
-  dayLabel: { fontSize: 10 },
+  chartLabels: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 8, marginTop: 6, minHeight: 18 },
+  dayLabel: { fontSize: 10, textAlign: "center" },
   legendRow: { flexDirection: "row", gap: 14 },
   legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
   legendDot: { width: 9, height: 9, borderRadius: 5 },

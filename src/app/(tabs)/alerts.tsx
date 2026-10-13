@@ -1,5 +1,6 @@
+import type { Href } from "expo-router";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { FlatList, Pressable, StyleSheet, View } from "react-native";
 import { Button, Card, IconButton, Text, useTheme } from "react-native-paper";
 
@@ -14,12 +15,9 @@ export default function AlertsScreen() {
   const theme = useTheme();
   const { state, notifications, markAllNotificationsRead, markNotificationRead, deleteNotification, summary } = useStore();
   const { filter } = useLocalSearchParams<{ filter?: string }>();
-  const [activeFilter, setActiveFilter] = useState<(typeof filters)[number]>(filter === "Low Stock" ? "Low Stock" : filter === "Expiry" ? "Expiry" : "All");
-  useEffect(() => {
-    if (filter === "Low Stock" || filter === "Expiry") {
-      setActiveFilter(filter);
-    }
-  }, [filter]);
+  const activeFilter = filters.includes(filter as (typeof filters)[number])
+    ? filter as (typeof filters)[number]
+    : "All";
   const language = state.user.preferences?.language ?? "English";
   const lowStockProducts = useMemo(() => getLowStockProducts(state.products), [state.products]);
 
@@ -43,7 +41,7 @@ export default function AlertsScreen() {
 
   return (
     <View style={[styles.page, { backgroundColor: theme.colors.background }]}>
-      <View style={styles.statusBar}><Text style={[styles.statusTime, { color: theme.colors.onSurfaceVariant }]}>9:41 AM</Text><Text style={[styles.statusSignal, { color: theme.colors.onSurfaceVariant }]}>◒</Text></View>
+      <View style={styles.statusBar} />
       <View style={styles.content}>
         <View style={styles.headingRow}>
           <View style={styles.headingGroup}>
@@ -61,7 +59,7 @@ export default function AlertsScreen() {
               key={filter}
               accessibilityRole="button"
               accessibilityState={{ selected: activeFilter === filter }}
-              onPress={() => setActiveFilter(filter)}
+              onPress={() => router.setParams({ filter })}
               style={activeFilter === filter ? [styles.activeChip, { backgroundColor: theme.colors.primary }] : [styles.inactiveChip, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}
             >
               <Text style={activeFilter === filter ? [styles.activeChipText, { color: theme.colors.surface }] : [styles.inactiveChipText, { color: theme.colors.onSurface }]}>
@@ -72,9 +70,9 @@ export default function AlertsScreen() {
         </View>
 
         {activeFilter === "Low Stock" ? (
-          <LowStockPanel language={language} products={lowStockProducts} onRestock={(product) => router.push({ pathname: "/stock-movement", params: { type: "in", productId: product.id } } as any)} />
+          <LowStockPanel language={language} products={lowStockProducts} onRestock={(product) => router.push({ pathname: "/stock-movement", params: { type: "in", productId: product.id } } as Href)} />
         ) : activeFilter === "Expiry" ? (
-          <ExpiryPanel language={language} products={getExpiringProducts(state.products)} onView={(product) => router.push({ pathname: "/product/[id]", params: { id: product.id } } as any)} />
+          <ExpiryPanel language={language} products={getExpiringProducts(state.products)} onView={(product) => router.push({ pathname: "/product/[id]", params: { id: product.id } } as Href)} />
         ) : (
           <FlatList
             data={visible}
@@ -168,11 +166,14 @@ function ExpiryPanel({ language, products, onView }: { language: string; product
   const theme = useTheme();
   const expired = products.filter((product) => getExpiryStatus(product).tone === "critical");
   const urgent = products.filter((product) => getExpiryStatus(product).tone === "warning");
-  const upcoming = products.filter((product) => getExpiryStatus(product).tone === "healthy");
+  const orderedProducts = [...products].sort((a, b) => {
+    const order: Record<string, number> = { critical: 0, warning: 1, healthy: 2, neutral: 3 };
+    return (order[getExpiryStatus(a).tone] ?? 99) - (order[getExpiryStatus(b).tone] ?? 99);
+  });
 
   return (
     <FlatList
-      data={products}
+      data={orderedProducts}
       keyExtractor={(product) => product.id}
       style={styles.list}
       contentContainerStyle={styles.lowStockContent}
@@ -184,11 +185,10 @@ function ExpiryPanel({ language, products, onView }: { language: string; product
             <LowStockStat value={products.length} label={translate(language, "totalItemsLabel")} color={theme.colors.primary} />
           </View>
           {expired.length > 0 ? <Text style={[styles.groupTitle, { color: theme.colors.onSurface }]}>{translate(language, "expiredLabel")}</Text> : null}
-          {expired.map((product) => <ExpiryItem key={product.id} language={language} product={product} onView={onView} />)}
           {urgent.length > 0 ? <Text style={[styles.groupTitle, { color: theme.colors.onSurface }]}>{translate(language, "expiringSoonTitle")}</Text> : null}
         </View>
       }
-      renderItem={({ item }) => upcoming.includes(item) ? <ExpiryItem language={language} product={item} onView={onView} /> : urgent.includes(item) ? <ExpiryItem language={language} product={item} onView={onView} /> : null}
+      renderItem={({ item }) => <ExpiryItem language={language} product={item} onView={onView} />}
       ListEmptyComponent={<Text style={styles.empty}>{translate(language, "noExpiringProducts")}</Text>}
     />
   );
@@ -233,7 +233,7 @@ const styles = StyleSheet.create({
   countText: { color: "#ffffff", fontSize: 12, fontWeight: "800" },
   filterRow: { flexDirection: "row", gap: 8, height: 44, paddingBottom: 12, alignItems: "center" },
   list: { flex: 1 },
-  listContent: { paddingBottom: 28 },
+  listContent: { paddingBottom: 88 },
   activeChip: { height: 30, minHeight: 30, paddingHorizontal: 12, borderRadius: 15, alignItems: "center", justifyContent: "center" },
   inactiveChip: { height: 30, minHeight: 30, paddingHorizontal: 12, borderRadius: 15, borderWidth: 1, alignItems: "center", justifyContent: "center" },
   activeChipText: { fontSize: 12, lineHeight: 14 },
@@ -248,7 +248,7 @@ const styles = StyleSheet.create({
   time: { fontSize: 12, marginTop: 2 },
   actionsRow: { flexDirection: "row", alignItems: "center", marginRight: -8, marginTop: -4, marginBottom: -8 },
   empty: { textAlign: "center", marginTop: 24 },
-  lowStockContent: { paddingBottom: 28 },
+  lowStockContent: { paddingBottom: 88 },
   lowStockStats: { flexDirection: "row", gap: 8, marginBottom: 16 },
   lowStockStat: { flex: 1, backgroundColor: "rgba(255,255,255,0.72)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(203,213,225,0.8)", padding: 10 },
   lowStockValue: { fontSize: 22, fontWeight: "800" },

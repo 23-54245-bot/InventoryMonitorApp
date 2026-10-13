@@ -1,7 +1,8 @@
 import { CameraType, CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
+import type { Href } from "expo-router";
 import { Redirect, useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { Platform, StyleSheet, View } from "react-native";
 import { Button, Card, IconButton, Text, Title, useTheme } from "react-native-paper";
 import Animated, { Easing, FadeIn, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from "react-native-reanimated";
 
@@ -32,7 +33,7 @@ export default function ScanModal() {
     }
 
     scanLinePosition.value = withRepeat(withTiming(90, { duration: 1500, easing: Easing.inOut(Easing.ease) }), -1, true);
-  }, [scanValue]);
+  }, [scanLinePosition, scanValue]);
 
   const scanLineStyle = useAnimatedStyle(() => ({
     top: `${scanLinePosition.value}%`,
@@ -42,7 +43,7 @@ export default function ScanModal() {
     return <Redirect href="/login" />;
   }
 
-  const closeScanner = () => (router.canGoBack() ? router.back() : router.replace("/(tabs)/inventory" as any));
+  const closeScanner = () => (router.canGoBack() ? router.back() : router.replace("/(tabs)/inventory" as Href));
 
   const handleScanned = ({ data }: BarcodeScanningResult) => {
     if (scanningRef.current) {
@@ -56,8 +57,8 @@ export default function ScanModal() {
   if (!permission) {
     return (
       <View style={[styles.permissionState, { backgroundColor: theme.colors.background }]}> 
-        <Text style={[styles.permissionText, { color: theme.colors.onSurface }]}>Preparing camera...</Text>
-        <Button mode="contained" onPress={requestPermission}>Allow camera</Button>
+        <Text style={[styles.permissionText, { color: theme.colors.onSurface }]}>{translate(language, "preparingCamera")}</Text>
+        <Button mode="contained" onPress={requestPermission}>{translate(language, "allowCamera")}</Button>
       </View>
     );
   }
@@ -65,9 +66,13 @@ export default function ScanModal() {
   if (!permission.granted) {
     return (
       <View style={[styles.permissionState, { backgroundColor: theme.colors.background }]}> 
-        <Text style={[styles.permissionText, { color: theme.colors.onSurface }]}>Camera permission is required for scanning.</Text>
-        <Button mode="contained" onPress={requestPermission}>Allow camera</Button>
-        <Button textColor={theme.colors.onPrimary} onPress={closeScanner}>Cancel</Button>
+        <Text style={[styles.permissionText, { color: theme.colors.onSurface }]}>
+          {Platform.OS === "web"
+            ? "Camera permission is required for barcode scanning. If prompted, please allow camera access in your browser."
+            : "Camera permission is required for scanning."}
+        </Text>
+        <Button mode="contained" onPress={requestPermission}>{translate(language, "allowCamera")}</Button>
+        <Button textColor={theme.colors.onPrimary} onPress={closeScanner}>{translate(language, "cancelButton")}</Button>
       </View>
     );
   }
@@ -75,9 +80,9 @@ export default function ScanModal() {
   if (cameraError) {
     return (
       <View style={[styles.permissionState, { backgroundColor: theme.colors.background }]}> 
-        <Text style={[styles.permissionText, { color: theme.colors.onSurface }]}>Unable to start the camera preview.</Text>
-        <Button mode="contained" onPress={() => setCameraError(false)}>Try again</Button>
-        <Button textColor={theme.colors.primary} onPress={closeScanner}>Cancel</Button>
+        <Text style={[styles.permissionText, { color: theme.colors.onSurface }]}>{translate(language, "unableToStartCamera")}</Text>
+        <Button mode="contained" onPress={() => setCameraError(false)}>{translate(language, "tryAgain")}</Button>
+        <Button textColor={theme.colors.primary} onPress={closeScanner}>{translate(language, "cancelButton")}</Button>
       </View>
     );
   }
@@ -107,17 +112,26 @@ export default function ScanModal() {
         </View>
 
         <View style={styles.bottomPanel}>
-          <Text style={[styles.bottomLabel, { color: theme.colors.onSurface }]}>Barcode scan</Text>
-          <Text style={[styles.bottomText, { color: theme.colors.onSurfaceVariant }]}>The camera accepts SKU values or item ids from the StockTrack catalog.</Text>
+          <Text style={[styles.bottomLabel, { color: theme.colors.onSurface }]}>{translate(language, "barcodeScanLabel")}</Text>
+          <Text style={[styles.bottomText, { color: theme.colors.onSurfaceVariant }]}>{translate(language, "barcodeScanHint")}</Text>
 
           {scanValue ? (
             <Animated.View entering={FadeIn.duration(250)}>
-            <Card style={[styles.resultCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}> 
+            <Card style={[styles.resultCard, { backgroundColor: theme.colors.surface }]}> 
               <Card.Content>
-                <Text style={[styles.resultLabel, { color: theme.colors.primary }]}>Last scan</Text>
+                <Text style={[styles.resultLabel, { color: theme.colors.primary }]}>{translate(language, "lastScanLabel")}</Text>
                 <Title style={[styles.resultTitle, { color: theme.colors.onSurface }]} numberOfLines={2} ellipsizeMode="tail">{matchedProduct?.name ?? scanValue}</Title>
-                <Text style={[styles.resultText, { color: theme.colors.onSurfaceVariant }]}>{matchedProduct ? `${matchedProduct.sku} · ${matchedProduct.category}` : "No matching product found."}</Text>
-                {matchedProduct ? <Button mode="contained" buttonColor={theme.colors.primary} onPress={() => router.push({ pathname: "/product/[id]", params: { id: matchedProduct.id } } as any)}>{translate(language, "viewProductButton")}</Button> : null}
+                <Text style={[styles.resultText, { color: theme.colors.onSurfaceVariant }]}>{matchedProduct ? `${matchedProduct.sku} · ${matchedProduct.category}` : `SKU: ${scanValue}`}</Text>
+                {matchedProduct ? (
+                  <Button mode="contained" buttonColor={theme.colors.primary} onPress={() => router.push({ pathname: "/product/[id]", params: { id: matchedProduct.id } } as Href)}>{translate(language, "viewProductButton")}</Button>
+                ) : (
+                  <>
+                    <Text style={[styles.unlistedText, { color: theme.colors.tertiary }]}>{translate(language, "unlistedProductLabel")}</Text>
+                    <Button mode="contained" icon="plus-box-outline" buttonColor={theme.colors.primary} onPress={() => router.push({ pathname: "/add-product", params: { sku: scanValue, name: "Unlisted Product" } } as Href)}>
+                      {translate(language, "addItemToInventory")}
+                    </Button>
+                  </>
+                )}
               </Card.Content>
             </Card>
             </Animated.View>
@@ -143,10 +157,11 @@ const styles = StyleSheet.create({
   bottomPanel: { gap: 12 },
   bottomLabel: { fontSize: 22, fontWeight: "800" },
   bottomText: { lineHeight: 20 },
-  resultCard: { borderRadius: 20, elevation: 1 },
+  resultCard: { borderRadius: 16, elevation: 6, boxShadow: "0px 4px 12px rgba(0,0,0,0.15)", borderWidth: 0 },
   resultLabel: { textTransform: "uppercase", letterSpacing: 1.1, fontSize: 11, marginBottom: 4 },
-  resultTitle: { fontSize: 18, marginBottom: 6 },
-  resultText: { marginBottom: 8 },
+  resultTitle: { fontSize: 17, fontWeight: "600", marginBottom: 6 },
+  resultText: { fontSize: 13, marginBottom: 8 },
+  unlistedText: { fontSize: 13, fontWeight: "600", marginBottom: 10 },
   permissionState: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 12 },
   permissionText: { textAlign: "center" },
 });

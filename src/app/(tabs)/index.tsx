@@ -1,7 +1,8 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import type { Href } from "expo-router";
 import { useRouter } from "expo-router";
 import { useMemo } from "react";
-import { FlatList, StyleSheet, View } from "react-native";
+import { FlatList, StyleSheet, useWindowDimensions, View } from "react-native";
 import { Avatar, Button, Card, Chip, IconButton, Surface, Text, TouchableRipple, useTheme } from "react-native-paper";
 import Svg, { Circle } from "react-native-svg";
 
@@ -10,14 +11,18 @@ import { TrendLegend, TrendLineChart } from "../../components/trend-line-chart";
 import { useAuth } from "../../context/auth";
 import { useStore } from "../../context/store";
 import { formatRelativeTime, getLowStockProducts, getSafetyStockStatus } from "../../data/freshmart";
+import { useBreakpoint } from "../../hooks/useBreakpoint";
 import { translate } from "../../lib/i18n";
 
 export default function HomeScreen() {
   const router = useRouter();
   const theme = useTheme();
   const { session } = useAuth();
-  const { summary, recentActivity, categoryBreakdown, weeklyActivity, state } = useStore();
+  const { summary, recentActivity, categoryBreakdown, weeklyActivity, state, sales, debts, debtPayments, customers } = useStore();
   const language = state.user.preferences.language;
+  const { width } = useWindowDimensions();
+  const breakpoint = useBreakpoint();
+  const isDesktop = breakpoint === "desktop";
 
   const lowStockProducts = useMemo(() => getLowStockProducts(state.products), [state.products]);
   const expiringProducts = useMemo(() => state.products.filter((product) => product.expiryDate).slice(0, 4), [state.products]);
@@ -34,221 +39,351 @@ export default function HomeScreen() {
     return new Date(latestUpdate).toLocaleString("en-PH", { month: "long", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
   }, [state.products]);
 
-  const quickActions = [
-    { label: translate(language, "stockInLabel"), icon: "arrow-up-right", route: { pathname: "/stock-movement", params: { type: "in" } }, accent: theme.colors.primary },
-    { label: translate(language, "stockOutLabel"), icon: "arrow-down-right", route: { pathname: "/stock-movement", params: { type: "out" } }, accent: theme.colors.secondary },
-    { label: translate(language, "productAddButton"), icon: "plus", route: "/add-product", accent: theme.colors.tertiary },
-    { label: translate(language, "utangTitle"), icon: "book-open-variant", route: "/utang", accent: "#d97706" },
-  ] as const;
+  const attentionCount = summary.lowStock + summary.outOfStock;
 
-  const chipBackground = theme.dark ? theme.colors.surfaceVariant : theme.colors.surfaceVariant;
-  const statusBackground = (tone: string) =>
-    tone === "healthy"
-      ? `${theme.colors.secondary}22`
-      : tone === "warning"
-      ? `${theme.colors.tertiary}22`
-      : `${theme.colors.error}22`;
-  const statusColor = (tone: string) =>
-    tone === "healthy" ? theme.colors.secondary : tone === "warning" ? theme.colors.tertiary : theme.colors.error;
-  const categoryChartData = [
-    { name: "Grains", population: categoryBreakdown.find((item) => item.name === "Grains & Rice")?.value ?? 0, color: "#2856d7" },
-    { name: "Oils", population: categoryBreakdown.find((item) => item.name === "Oil & Condiments")?.value ?? 0, color: "#159a72" },
-    { name: "Dairy", population: categoryBreakdown.find((item) => item.name === "Dairy")?.value ?? 0, color: "#ed9200" },
-    { name: "Instant", population: categoryBreakdown.find((item) => item.name === "Instant Foods")?.value ?? 0, color: "#7138e8" },
-    { name: "Others", population: categoryBreakdown.filter((item) => !["Grains & Rice", "Oil & Condiments", "Dairy", "Instant Foods"].includes(item.name)).reduce((total, item) => total + item.value, 0), color: "#0ea5d9" },
-  ];
+  const categoryChartColors = useMemo(() => [
+    theme.colors.primary,
+    theme.colors.tertiary,
+    theme.colors.secondary,
+    theme.colors.error,
+    theme.colors.outline,
+  ], [theme.colors]);
+
+  const categoryChartData = useMemo(() => {
+    const sorted = [...categoryBreakdown].sort((a, b) => b.value - a.value);
+    const top4 = sorted.slice(0, 4);
+    const othersValue = sorted.slice(4).reduce((sum, item) => sum + item.value, 0);
+    const result = top4.map((item, idx) => ({
+      name: item.name,
+      population: item.value,
+      color: categoryChartColors[idx % categoryChartColors.length],
+    }));
+    if (othersValue > 0 || sorted.length === 0) {
+      result.push({ name: "Others", population: othersValue, color: categoryChartColors[4] });
+    }
+    return result;
+  }, [categoryBreakdown, categoryChartColors]);
+
+  const combinedRecentEvents = useMemo(() => {
+    type ActivityEvent = {
+      id: string;
+      title: string;
+      subtitle: string;
+      timestamp: string;
+      icon: "arrow-top-right" | "arrow-bottom-right" | "cart-outline" | "alert-circle-outline" | "book-account" | "cash-check";
+      color: string;
+      badgeText: string;
+    };
+
+    const movementEvents: ActivityEvent[] = recentActivity.slice(0, 5).map((m) => ({
+      id: `mov-${m.id}`,
+      title: m.productName,
+      subtitle: `${m.reason ? m.reason.toUpperCase() : (m.type === "in" ? "Stock In" : "Stock Out")} · ${formatRelativeTime(m.timestamp)}`,
+      timestamp: m.timestamp,
+      icon: m.type === "in" ? "arrow-top-right" : "arrow-bottom-right",
+      color: m.type === "in" ? theme.colors.primary : theme.colors.tertiary,
+      badgeText: `${m.type === "in" ? "+" : "-"}${m.quantity}`,
+    }));
+
+    const saleEvents: ActivityEvent[] = (sales || []).slice(0, 3).map((s) => ({
+      id: `sale-${s.id}`,
+      title: `Sale #${s.receiptNumber}`,
+      subtitle: `${s.paymentMethod.toUpperCase().replace("_", " ")} · ${s.totalItems} items · ${formatRelativeTime(s.timestamp)}`,
+      timestamp: s.timestamp,
+      icon: "cart-outline",
+      color: theme.colors.secondary,
+      badgeText: `₱${s.totalAmount.toFixed(0)}`,
+    }));
+
+    const creditEvents: ActivityEvent[] = debts.filter((debt) => !debt.saleId).map((debt) => ({
+      id: `credit-${debt.id}`,
+      title: `${translate(language, "ledgerCreditLabel")} · ${debt.customerName}`,
+      subtitle: `${debt.itemsSummary || translate(language, "utangTitle")} · ${formatRelativeTime(debt.createdAt)}`,
+      timestamp: debt.createdAt,
+      icon: "book-account",
+      color: theme.colors.error,
+      badgeText: `+₱${debt.amount.toFixed(0)}`,
+    }));
+
+    const paymentEvents: ActivityEvent[] = debtPayments.map((payment) => {
+      const debt = debts.find((item) => item.id === payment.debtId);
+      const customer = customers.find((item) => item.id === payment.customerId);
+      return {
+        id: `debt-payment-${payment.id}`,
+        title: `${translate(language, "ledgerPaymentLabel")} · ${debt?.customerName ?? customer?.name ?? translate(language, "unknownCustomer")}`,
+        subtitle: `${payment.paymentMethod.toUpperCase()} · ${formatRelativeTime(payment.createdAt)}`,
+        timestamp: payment.createdAt,
+        icon: "cash-check",
+        color: theme.colors.primary,
+        badgeText: `-₱${payment.amount.toFixed(0)}`,
+      };
+    });
+
+    return [...movementEvents, ...saleEvents, ...creditEvents, ...paymentEvents]
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 5);
+  }, [recentActivity, sales, debts, debtPayments, customers, theme.colors, language]);
 
   return (
-    <ScreenContainer style={styles.page} contentContainerStyle={styles.content}>
-      <Surface style={[styles.hero, { backgroundColor: theme.colors.primary, borderColor: theme.colors.outline }]}>
-        <View style={styles.heroRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.greeting, { color: theme.colors.onPrimary }]}>{greeting}</Text>
-            <Text numberOfLines={1} style={[styles.storeName, { color: theme.colors.onPrimary }]}>{state.user.storeName || translate(language, "storeNameNotSet")}</Text>
-            <Text style={[styles.lastUpdated, { color: `${theme.colors.onPrimary}cc` }]}>◷ {translate(language, "lastUpdated")}: {lastUpdated}</Text>
-          </View>
-          <Avatar.Text size={52} label={session?.name.split(" ").map((part) => part[0]).join("").slice(0, 2) ?? "FM"} style={[styles.avatar, { backgroundColor: theme.colors.secondary }]} />
-        </View>
-      </Surface>
-
-      <TouchableRipple
-        borderless
-        onPress={() => router.push("/pos" as any)}
-        style={[styles.posBanner, { backgroundColor: theme.dark ? `${theme.colors.primary}18` : "#f5f3ff", borderColor: "#8b5cf6" }]}
-      >
-        <View style={styles.posContent}>
-          <IconButton icon="cash-register" iconColor="#7c3aed" containerColor="#ede9fe" size={24} />
-          <View style={styles.posText}>
-            <Text style={[styles.posTitle, { color: theme.dark ? theme.colors.onSurface : "#5b21b6" }]}>
-              {translate(language, "posTitle")}
-            </Text>
-            <Text style={[styles.posSubtitle, { color: theme.dark ? theme.colors.onSurfaceVariant : "#6d28d9" }]}>
-              {translate(language, "posSubtitle")}
-            </Text>
-          </View>
-          <IconButton icon="chevron-right" iconColor="#7c3aed" size={24} />
-        </View>
-      </TouchableRipple>
-
-      <TouchableRipple
-        borderless
-        onPress={() => router.push("/utang" as any)}
-        style={[styles.posBanner, { backgroundColor: theme.dark ? `${theme.colors.tertiary}18` : "#fffbeb", borderColor: "#f59e0b", marginTop: -2 }]}
-      >
-        <View style={styles.posContent}>
-          <IconButton icon="book-open-page-variant" iconColor="#d97706" containerColor="#fef3c7" size={24} />
-          <View style={styles.posText}>
-            <Text style={[styles.posTitle, { color: theme.dark ? theme.colors.onSurface : "#92400e" }]}>
-              {translate(language, "utangTitle")}
-            </Text>
-            <Text style={[styles.posSubtitle, { color: theme.dark ? theme.colors.onSurfaceVariant : "#b45309" }]}>
-              {translate(language, "utangSubtitle")}
-            </Text>
-          </View>
-          <IconButton icon="chevron-right" iconColor="#d97706" size={24} />
-        </View>
-      </TouchableRipple>
-
-      {lowStockProducts.length > 0 ? (
-        <TouchableRipple
-          borderless
-          onPress={() => router.push({ pathname: "/alerts", params: { filter: "Low Stock" } } as any)}
-          style={[styles.restockBanner, { backgroundColor: theme.dark ? `${theme.colors.tertiary}18` : "#fffbeb", borderColor: theme.dark ? theme.colors.tertiary : "#f8cc52" }]}
-        >
-          <View style={styles.restockContent}>
-            <IconButton icon="alert-outline" iconColor={theme.dark ? theme.colors.tertiary : "#d97706"} containerColor={theme.dark ? `${theme.colors.tertiary}26` : "#fff1c2"} size={24} />
-            <View style={styles.restockText}>
-              <Text style={[styles.restockTitle, { color: theme.dark ? theme.colors.onSurface : "#92400e" }]}>{lowStockProducts.length} {translate(language, "restockBannerTitle")}</Text>
-              <Text style={[styles.restockSubtitle, { color: theme.dark ? theme.colors.onSurfaceVariant : "#b45309" }]}>{translate(language, "restockBannerSubtitle")}</Text>
+    <View style={styles.page}>
+      <ScreenContainer style={styles.page} contentContainerStyle={styles.content}>
+        {/* Hero banner with store name & help entry point */}
+        <Surface style={[styles.hero, { backgroundColor: theme.colors.primary, borderColor: theme.colors.outline }]}>
+          <View style={styles.heroRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.greeting, { color: theme.colors.onPrimary }]}>{greeting}</Text>
+              <Text numberOfLines={1} style={[styles.storeName, { color: theme.colors.onPrimary }]}>
+                {state.user.storeName || translate(language, "storeNameNotSet")}
+              </Text>
+              {/* Phase 2: Contextual attention line */}
+              <Text style={[styles.attentionLine, { color: attentionCount > 0 ? "#FDE68A" : "#BBF7D0" }]}>
+                {attentionCount > 0
+                  ? `⚠ ${attentionCount} item${attentionCount > 1 ? "s" : ""} need${attentionCount === 1 ? "s" : ""} your attention today`
+                  : "✓ All inventory is healthy today"}
+              </Text>
+              <Text style={[styles.lastUpdated, { color: `${theme.colors.onPrimary}cc` }]}>
+                ◷ {translate(language, "lastUpdated")}: {lastUpdated}
+              </Text>
             </View>
-            <IconButton icon="chevron-right" iconColor={theme.dark ? theme.colors.tertiary : "#d97706"} size={24} />
-          </View>
-        </TouchableRipple>
-      ) : null}
-
-      {expiringProducts.length > 0 ? (
-        <TouchableRipple
-          borderless
-          onPress={() => router.push({ pathname: "/alerts", params: { filter: "Expiry" } } as any)}
-          style={[styles.expiryBanner, { backgroundColor: theme.dark ? `${theme.colors.tertiary}18` : "#fff7ed", borderColor: theme.dark ? theme.colors.tertiary : "#fdba74" }]}
-        >
-          <View style={styles.restockContent}>
-            <IconButton icon="calendar-alert-outline" iconColor={theme.dark ? theme.colors.tertiary : "#c2410c"} containerColor={theme.dark ? `${theme.colors.tertiary}26` : "#ffedd5"} size={24} />
-            <View style={styles.restockText}>
-              <Text style={[styles.restockTitle, { color: theme.dark ? theme.colors.onSurface : "#9a3412" }]}>{expiringProducts.length} {translate(language, "expiryBannerTitle")}</Text>
-              <Text style={[styles.restockSubtitle, { color: theme.dark ? theme.colors.onSurfaceVariant : "#c2410c" }]}>{translate(language, "expiryBannerSubtitle")}</Text>
+            <View style={styles.heroActions}>
+              <IconButton
+                icon="help-circle-outline"
+                iconColor={theme.colors.onPrimary}
+                containerColor="rgba(255,255,255,0.16)"
+                size={22}
+                onPress={() => router.push("/help" as Href)}
+                accessibilityLabel="Open help and tutorials"
+              />
+              <Avatar.Text
+                size={48}
+                label={session?.name.split(" ").map((part) => part[0]).join("").slice(0, 2) ?? "FM"}
+                style={[styles.avatar, { backgroundColor: theme.colors.secondary }]}
+              />
             </View>
-            <IconButton icon="chevron-right" iconColor={theme.dark ? theme.colors.tertiary : "#c2410c"} size={24} />
           </View>
-        </TouchableRipple>
-      ) : null}
+        </Surface>
 
-      <View style={styles.statsGrid}>
-        <MiniStat title={translate(language, "statProducts")} value={summary.totalProducts} accent={theme.colors.primary} theme={theme} />
-        <MiniStat title={translate(language, "statInStock")} value={summary.inStock} accent={theme.colors.secondary} theme={theme} />
-        <MiniStat title={translate(language, "statLowStock")} value={summary.lowStock} accent={theme.colors.tertiary} theme={theme} />
-        <MiniStat title={translate(language, "statOutOfStock")} value={summary.outOfStock} accent={theme.colors.error} theme={theme} />
-      </View>
-
-      <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>{translate(language, "quickActionsLabel")}</Text>
-        <View style={styles.quickRow}>
-          {quickActions.map((action) => (
-            <TouchableRipple key={action.label} style={[styles.quickCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline, borderTopColor: action.accent, borderBottomColor: action.accent }]} onPress={() => router.push(action.route as any)}>
-              <View style={styles.quickContent}>
-                <View style={[styles.quickIcon, { backgroundColor: theme.colors.secondaryContainer }]}><MaterialCommunityIcons name={action.icon} size={20} color={action.accent} /></View>
-                <Text style={[styles.quickLabel, { color: theme.colors.onSurface }]}>{action.label}</Text>
+        {/* Banners */}
+        {lowStockProducts.length > 0 ? (
+          <TouchableRipple
+            borderless
+            onPress={() => router.push({ pathname: "/alerts", params: { filter: "Low Stock" } } as Href)}
+            style={[styles.restockBanner, { backgroundColor: theme.dark ? `${theme.colors.tertiary}18` : "#fffbeb", borderColor: theme.dark ? theme.colors.tertiary : "#f8cc52" }]}
+          >
+            <View style={styles.restockContent}>
+              <IconButton icon="alert-outline" iconColor={theme.dark ? theme.colors.tertiary : "#d97706"} containerColor={theme.dark ? `${theme.colors.tertiary}26` : "#fff1c2"} size={24} />
+              <View style={styles.restockText}>
+                <Text style={[styles.restockTitle, { color: theme.dark ? theme.colors.onSurface : "#92400e" }]}>{lowStockProducts.length} {translate(language, "restockBannerTitle")}</Text>
+                <Text style={[styles.restockSubtitle, { color: theme.dark ? theme.colors.onSurfaceVariant : "#b45309" }]}>{translate(language, "restockBannerSubtitle")}</Text>
               </View>
+              <IconButton icon="chevron-right" iconColor={theme.dark ? theme.colors.tertiary : "#d97706"} size={24} />
+            </View>
+          </TouchableRipple>
+        ) : null}
+
+        {expiringProducts.length > 0 ? (
+          <TouchableRipple
+            borderless
+            onPress={() => router.push({ pathname: "/alerts", params: { filter: "Expiry" } } as Href)}
+            style={[styles.expiryBanner, { backgroundColor: theme.dark ? `${theme.colors.tertiary}18` : "#fff7ed", borderColor: theme.dark ? theme.colors.tertiary : "#fdba74" }]}
+          >
+            <View style={styles.restockContent}>
+              <IconButton icon="calendar-alert-outline" iconColor={theme.dark ? theme.colors.tertiary : "#c2410c"} containerColor={theme.dark ? `${theme.colors.tertiary}26` : "#ffedd5"} size={24} />
+              <View style={styles.restockText}>
+                <Text style={[styles.restockTitle, { color: theme.dark ? theme.colors.onSurface : "#9a3412" }]}>{expiringProducts.length} {translate(language, "expiryBannerTitle")}</Text>
+                <Text style={[styles.restockSubtitle, { color: theme.dark ? theme.colors.onSurfaceVariant : "#c2410c" }]}>{translate(language, "expiryBannerSubtitle")}</Text>
+              </View>
+              <IconButton icon="chevron-right" iconColor={theme.dark ? theme.colors.tertiary : "#c2410c"} size={24} />
+            </View>
+          </TouchableRipple>
+        ) : null}
+
+        {/* Phase 2: Single inline row of typography */}
+        <Surface style={[styles.flatStatRow, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}>
+          <View style={styles.statCell}>
+            <Text style={[styles.statNumber, { color: theme.colors.primary }]}>{summary.totalProducts}</Text>
+            <Text style={[styles.statCaption, { color: theme.colors.onSurfaceVariant }]}>{translate(language, "statProducts")}</Text>
+          </View>
+          <View style={[styles.statDivider, { backgroundColor: theme.colors.outline }]} />
+          <View style={styles.statCell}>
+            <Text style={[styles.statNumber, { color: theme.colors.secondary }]}>{summary.inStock}</Text>
+            <Text style={[styles.statCaption, { color: theme.colors.onSurfaceVariant }]}>{translate(language, "statInStock")}</Text>
+          </View>
+          <View style={[styles.statDivider, { backgroundColor: theme.colors.outline }]} />
+          <View style={styles.statCell}>
+            <Text style={[styles.statNumber, { color: theme.colors.tertiary }]}>{summary.lowStock}</Text>
+            <Text style={[styles.statCaption, { color: theme.colors.onSurfaceVariant }]}>{translate(language, "statLowStock")}</Text>
+          </View>
+          <View style={[styles.statDivider, { backgroundColor: theme.colors.outline }]} />
+          <View style={styles.statCell}>
+            <Text style={[styles.statNumber, { color: theme.colors.error }]}>{summary.outOfStock}</Text>
+            <Text style={[styles.statCaption, { color: theme.colors.onSurfaceVariant }]}>{translate(language, "statOutOfStock")}</Text>
+          </View>
+        </Surface>
+
+        {/* Phase 3: 2-column layout on desktop, stacked on mobile/tablet */}
+        <View style={isDesktop ? styles.desktopRow : undefined}>
+          {/* Column 1: Recent Activity + Safety Stock Overview */}
+          <View style={isDesktop ? styles.desktopCol : undefined}>
+            {/* Phase 2: Recent Activity placed directly below stats */}
+            <Card style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}>
+              <Card.Content>
+                <View style={styles.cardHeaderRow}>
+                  <Text style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
+                    {translate(language, "recentActivityTitle")}
+                  </Text>
+                  {session?.role !== "Staff" ? (
+                    <Button compact onPress={() => router.push("/reports")}>
+                      {translate(language, "viewReports")}
+                    </Button>
+                  ) : null}
+                </View>
+                <FlatList
+                  data={combinedRecentEvents}
+                  keyExtractor={(item) => item.id}
+                  scrollEnabled={false}
+                  renderItem={({ item }) => (
+                    <View style={[styles.activityRow, { borderBottomColor: theme.colors.outline }]}>
+                      <View style={[styles.activityIcon, { backgroundColor: `${item.color}18` }]}>
+                        <MaterialCommunityIcons name={item.icon} size={20} color={item.color} />
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
+                        <Text style={[styles.activityTitle, { color: theme.colors.onSurface }]} numberOfLines={1}>
+                          {item.title}
+                        </Text>
+                        <Text style={[styles.activityMeta, { color: theme.colors.onSurfaceVariant }]} numberOfLines={1}>
+                          {item.subtitle}
+                        </Text>
+                      </View>
+                      <Text style={[styles.activityQty, { color: item.color }]}>
+                        {item.badgeText}
+                      </Text>
+                    </View>
+                  )}
+                  ListEmptyComponent={
+                    <Text style={[styles.emptyListText, { color: theme.colors.onSurfaceVariant }]}>
+                      No recent activity recorded yet.
+                    </Text>
+                  }
+                />
+              </Card.Content>
+            </Card>
+
+            {/* Safety Stock Overview */}
+            <Card style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}>
+              <Card.Content>
+                <View style={styles.cardHeaderRow}>
+                  <Text style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
+                    {translate(language, "safetyStockOverview")}
+                  </Text>
+                  <Button compact onPress={() => router.push({ pathname: "/alerts", params: { filter: "Low Stock" } } as Href)}>
+                    View All
+                  </Button>
+                </View>
+                {lowStockProducts.length === 0 ? (
+                  <Text style={[styles.emptyListText, { color: theme.colors.secondary }]}>
+                    ✓ All products are above safety stock threshold.
+                  </Text>
+                ) : (
+                  lowStockProducts.slice(0, 4).map((product) => {
+                    const status = getSafetyStockStatus(product);
+                    return (
+                      <View key={product.id} style={[styles.healthRow, { borderBottomColor: theme.colors.outline }]}>
+                        <View style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
+                          <Text style={[styles.healthTitle, { color: theme.colors.onSurface }]} numberOfLines={1}>
+                            {product.name}
+                          </Text>
+                          <Text style={[styles.healthMeta, { color: theme.colors.onSurfaceVariant }]} numberOfLines={1}>
+                            {product.currentStock} / {product.lowStockThreshold} {product.unitType}
+                          </Text>
+                        </View>
+                        <Chip
+                          compact
+                          style={[
+                            styles.statusChip,
+                            { backgroundColor: status.tone === "critical" ? `${theme.colors.error}22` : `${theme.colors.tertiary}22` },
+                          ]}
+                          textStyle={{
+                            color: status.tone === "critical" ? theme.colors.error : theme.colors.tertiary,
+                            fontWeight: "700",
+                          }}
+                        >
+                          {status.label}
+                        </Chip>
+                      </View>
+                    );
+                  })
+                )}
+              </Card.Content>
+            </Card>
+          </View>
+
+          {/* Column 2: Analytical charts */}
+          <View style={isDesktop ? styles.desktopCol : undefined}>
+            {/* Weekly Activity Line Chart */}
+            <TouchableRipple borderless onPress={() => router.push({ pathname: "/reports", params: { tab: "Weekly" } } as Href)}>
+              <Card style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}>
+                <Card.Content style={styles.chartContent}>
+                  <View style={styles.weeklyHeader}>
+                    <Text style={[styles.weeklyTitle, { color: theme.colors.onSurface }]}>
+                      {translate(language, "weeklyActivity")}
+                    </Text>
+                    <Text style={[styles.weeklyDate, { color: theme.colors.onSurfaceVariant }]}>
+                      {weeklyActivity.selectedRange}
+                    </Text>
+                  </View>
+                  <TrendLineChart
+                    labels={weeklyActivity.labels}
+                    first={weeklyActivity.stockIn}
+                    second={weeklyActivity.stockOut}
+                    firstColor={theme.colors.primary}
+                    secondColor={theme.colors.tertiary}
+                  />
+                  <View style={styles.weeklyLegend}>
+                    <TrendLegend
+                      firstColor={theme.colors.primary}
+                      secondColor={theme.colors.tertiary}
+                      firstLabel={translate(language, "stockInLabel")}
+                      secondLabel={translate(language, "stockOutLabel")}
+                    />
+                  </View>
+                </Card.Content>
+              </Card>
             </TouchableRipple>
-          ))}
+
+            {/* Stock by Category Donut Chart */}
+            <Card style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}>
+              <Card.Content style={styles.categoryContent}>
+                <Text style={[styles.categoryTitle, { color: theme.colors.onSurface }]}>
+                  {translate(language, "stockByCategory")}
+                </Text>
+                <View style={[styles.categoryChartLayout, width < 700 && styles.categoryChartLayoutFabSafe]}>
+                  <View style={styles.pieWrap}>
+                    <CategoryDonut data={categoryChartData} />
+                  </View>
+                  <View style={styles.categoryLegend}>
+                    {categoryChartData.map((category) => (
+                      <View key={category.name} style={styles.categoryLegendRow}>
+                        <View style={styles.categoryLegendLabel}>
+                          <View style={[styles.categoryLegendDot, { backgroundColor: category.color }]} />
+                          <Text style={[styles.categoryName, { color: theme.colors.onSurface }]}>
+                            {category.name}
+                          </Text>
+                        </View>
+                        <Text style={[styles.categoryValue, { color: theme.colors.onSurfaceVariant }]}>
+                          {category.population}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              </Card.Content>
+            </Card>
+          </View>
         </View>
-      </View>
+      </ScreenContainer>
 
-      <TouchableRipple borderless onPress={() => router.push({ pathname: "/reports", params: { tab: "Weekly" } } as any)}>
-        <Card style={[styles.chartCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}> 
-          <Card.Content style={styles.chartContent}>
-          <View style={styles.weeklyHeader}>
-            <Text style={[styles.weeklyTitle, { color: theme.colors.onSurface }]}>{translate(language, "weeklyActivity")}</Text>
-            <Text style={[styles.weeklyDate, { color: theme.colors.onSurfaceVariant }]}>{weeklyActivity.selectedRange}</Text>
-          </View>
-          <TrendLineChart labels={weeklyActivity.labels} first={weeklyActivity.stockIn} second={weeklyActivity.stockOut} firstColor={theme.colors.primary} secondColor={theme.colors.secondary} />
-          <View style={styles.weeklyLegend}><TrendLegend firstColor={theme.colors.primary} secondColor={theme.colors.secondary} firstLabel={translate(language, "stockInLabel")} secondLabel={translate(language, "stockOutLabel")} /></View>
-          </Card.Content>
-        </Card>
-      </TouchableRipple>
-
-      <Card style={[styles.categoryCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}> 
-        <Card.Content style={styles.categoryContent}>
-          <Text style={[styles.categoryTitle, { color: theme.colors.onSurface }]}>{translate(language, "stockByCategory")}</Text>
-          <View style={styles.categoryChartLayout}>
-            <View style={styles.pieWrap}><CategoryDonut data={categoryChartData} /></View>
-            <View style={styles.categoryLegend}>
-              {categoryChartData.map((category) => <View key={category.name} style={styles.categoryLegendRow}><View style={styles.categoryLegendLabel}><View style={[styles.categoryLegendDot, { backgroundColor: category.color }]} /><Text style={[styles.categoryName, { color: theme.colors.onSurface }]} numberOfLines={1}>{category.name}</Text></View><Text style={[styles.categoryValue, { color: theme.colors.onSurfaceVariant }]}>{category.population}</Text></View>)}
-            </View>
-          </View>
-        </Card.Content>
-      </Card>
-
-      <Card style={[styles.alertCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}> 
-        <Card.Content>
-          <Text style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>{translate(language, "safetyStockOverview")}</Text>
-          <View style={styles.alertRow}>
-            <View style={[styles.pill, { backgroundColor: `${theme.colors.error}16` }]}><Text style={[styles.pillText, { color: theme.colors.error }]}>{lowStockProducts.length} {translate(language, "lowStockSummary")}</Text></View>
-            <View style={[styles.pill, { backgroundColor: `${theme.colors.tertiary}16` }]}><Text style={[styles.pillText, { color: theme.colors.tertiary }]}>{expiringProducts.length} {translate(language, "expiringSummary")}</Text></View>
-          </View>
-          {lowStockProducts.slice(0, 3).map((product) => {
-            const status = getSafetyStockStatus(product);
-            return (
-              <View key={product.id} style={[styles.healthRow, { borderBottomColor: theme.colors.outline }]}>
-                <View style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
-                  <Text style={[styles.healthTitle, { color: theme.colors.onSurface }]} numberOfLines={2} ellipsizeMode="tail">{product.name}</Text>
-                  <Text style={[styles.healthMeta, { color: theme.colors.onSurfaceVariant }]} numberOfLines={1} ellipsizeMode="tail">{product.currentStock}/{product.lowStockThreshold} {product.unitType}</Text>
-                </View>
-                <Chip compact style={[status.tone === "critical" ? [styles.statusChip, { backgroundColor: `${theme.colors.error}22` }] : [styles.statusChip, { backgroundColor: `${theme.colors.tertiary}22` }], { flexShrink: 0, alignSelf: "flex-start" }]} textStyle={{ color: status.tone === "critical" ? theme.colors.error : theme.colors.tertiary }}>{status.label}</Chip>
-              </View>
-            );
-          })}
-        </Card.Content>
-      </Card>
-
-      <Card style={[styles.listCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}> 
-        <Card.Content>
-          <View style={styles.cardHeaderRow}>
-            <Text style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>{translate(language, "recentActivityTitle")}</Text>
-            <Button compact onPress={() => router.push("/reports")}>{translate(language, "viewReports")}</Button>
-          </View>
-          <FlatList
-            data={recentActivity}
-            keyExtractor={(item) => item.id}
-            scrollEnabled={false}
-            renderItem={({ item }) => (
-              <View style={[styles.activityRow, { borderBottomColor: theme.colors.outline }]}>
-                <View style={[styles.activityIcon, { backgroundColor: item.type === "in" ? `${theme.colors.primary}16` : `${theme.colors.secondary}16` }]}>
-                  <MaterialCommunityIcons name={item.type === "in" ? "arrow-top-right" : "arrow-bottom-right"} size={18} color={item.type === "in" ? theme.colors.primary : theme.colors.secondary} />
-                </View>
-                <View style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
-                  <Text style={[styles.activityTitle, { color: theme.colors.onSurface }]} numberOfLines={2} ellipsizeMode="tail">{item.productName}</Text>
-                  <Text style={[styles.activityMeta, { color: theme.colors.onSurfaceVariant }]} numberOfLines={1} ellipsizeMode="tail">{formatRelativeTime(item.timestamp)}</Text>
-                </View>
-                <Text style={[styles.activityQty, { color: item.type === "in" ? theme.colors.primary : theme.colors.secondary, flexShrink: 0 }]}>{item.quantity}</Text>
-              </View>
-            )}
-          />
-        </Card.Content>
-      </Card>
-
-    </ScreenContainer>
-  );
-}
-
-function MiniStat({ title, value, accent, theme }: { title: string; value: number; accent: string; theme: any }) {
-  return (
-    <Card style={[styles.statCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline, borderTopColor: accent, borderBottomColor: accent }]}> 
-      <Card.Content style={styles.statContent}>
-        <Text style={[styles.statValue, { color: accent }]}>{value}</Text>
-        <Text style={[styles.statLabel, { color: theme.colors.onSurfaceVariant }]}>{title}</Text>
-      </Card.Content>
-    </Card>
+    </View>
   );
 }
 
@@ -259,16 +394,37 @@ function CategoryDonut({ data }: { data: { population: number; color: string }[]
   const strokeWidth = 22;
   const circumference = 2 * Math.PI * radius;
   const total = data.reduce((sum, item) => sum + item.population, 0);
-  let offset = 0;
+
+  const segments = data.reduce<{ item: { population: number; color: string }; offset: number }[]>(
+    (acc, item) => {
+      const prevOffset =
+        acc.length > 0
+          ? acc[acc.length - 1].offset + (total ? (acc[acc.length - 1].item.population / total) * circumference : 0)
+          : 0;
+      return [...acc, { item, offset: prevOffset }];
+    },
+    []
+  );
 
   return (
     <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-      {data.map((item) => {
+      {segments.map(({ item, offset }) => {
         const segment = total ? (item.population / total) * circumference : 0;
         const visibleSegment = Math.max(segment - 3, 0);
-        const currentOffset = offset;
-        offset += segment;
-        return <Circle key={item.color} cx={center} cy={center} r={radius} fill="transparent" stroke={item.color} strokeWidth={strokeWidth} strokeDasharray={`${visibleSegment} ${circumference - visibleSegment}`} strokeDashoffset={-currentOffset} transform={`rotate(-90 ${center} ${center})`} />;
+        return (
+          <Circle
+            key={item.color}
+            cx={center}
+            cy={center}
+            r={radius}
+            fill="transparent"
+            stroke={item.color}
+            strokeWidth={strokeWidth}
+            strokeDasharray={`${visibleSegment} ${circumference - visibleSegment}`}
+            strokeDashoffset={-offset}
+            transform={`rotate(-90 ${center} ${center})`}
+          />
+        );
       })}
     </Svg>
   );
@@ -276,75 +432,77 @@ function CategoryDonut({ data }: { data: { population: number; color: string }[]
 
 const styles = StyleSheet.create({
   page: { flex: 1 },
-  content: { padding: 16, paddingBottom: 30 },
+  content: { padding: 16, paddingBottom: 88 },
   hero: { borderRadius: 0, padding: 16, paddingTop: 24, marginTop: -16, marginHorizontal: -16, marginBottom: 14, borderWidth: 1, elevation: 2 },
   heroRow: { flexDirection: "row", alignItems: "center", gap: 12 },
-  greeting: { fontSize: 14, marginBottom: 6 },
-  storeName: { fontSize: 26, lineHeight: 31, fontWeight: "800", marginBottom: 3 },
+  heroActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  greeting: { fontSize: 14, marginBottom: 4 },
+  storeName: { fontSize: 24, lineHeight: 28, fontWeight: "800", marginBottom: 3 },
+  attentionLine: { fontSize: 13, fontWeight: "700", marginTop: 2, marginBottom: 4 },
   lastUpdated: { fontSize: 11, marginTop: 2 },
   avatar: {},
-  posBanner: { borderRadius: 18, borderWidth: 1.5, marginBottom: 14 },
-  posContent: { flexDirection: "row", alignItems: "center", paddingVertical: 8, paddingHorizontal: 10 },
-  posText: { flex: 1, marginLeft: 6 },
-  posTitle: { fontSize: 16, fontWeight: "800" },
-  posSubtitle: { fontSize: 12, marginTop: 2 },
-  restockBanner: { borderRadius: 18, borderWidth: 1, marginBottom: 14 },
-  expiryBanner: { borderRadius: 18, borderWidth: 1, marginBottom: 14 },
+  restockBanner: { borderRadius: 16, borderWidth: 1, marginBottom: 12 },
+  expiryBanner: { borderRadius: 16, borderWidth: 1, marginBottom: 12 },
   restockContent: { flexDirection: "row", alignItems: "center", paddingVertical: 6, paddingHorizontal: 8 },
   restockText: { flex: 1 },
   restockTitle: { fontSize: 15, fontWeight: "800" },
-  restockSubtitle: { fontSize: 13, marginTop: 3 },
-  statsGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 10, marginBottom: 12 },
-  statCard: { width: "48%", borderRadius: 16, borderWidth: 1, borderTopWidth: 3, borderBottomWidth: 3, elevation: 3 },
-  statContent: { alignItems: "center", paddingBottom: 6 },
-  statValue: { fontSize: 24, fontWeight: "800" },
-  statLabel: { fontSize: 12, textAlign: "center", fontWeight: "600" },
-  chartCard: { borderRadius: 16, marginBottom: 12, borderWidth: 1, elevation: 3 },
-  categoryCard: { borderRadius: 16, marginBottom: 12, borderWidth: 1, elevation: 3 },
-  categoryContent: { paddingTop: 16, paddingHorizontal: 16, paddingBottom: 20 },
-  categoryTitle: { fontSize: 15, fontWeight: "700", marginBottom: 12 },
-  chartContent: { paddingTop: 12, paddingBottom: 18 },
-  chartSubtitle: { fontSize: 12, marginTop: -6 },
-  weeklyHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 3 },
-  weeklyTitle: { fontSize: 15, fontWeight: "700" },
-  weeklyDate: { fontSize: 11 },
-  weeklyLegend: { alignItems: "center", marginTop: -3 },
-  legendRow: { flexDirection: "row", gap: 8, alignItems: "center" },
-  legendItem: { flexDirection: "row", alignItems: "center", gap: 4 },
-  legendDot: { width: 7, height: 7, borderRadius: 4 },
-  legendText: { fontSize: 10 },
-  chartWrap: { alignSelf: "center", marginTop: 8 },
-  chartLabels: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 10 },
-  dayLabel: { fontSize: 10 },
-  categoryChartLayout: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 16 },
-  pieWrap: { width: 110, height: 110, flexShrink: 0, alignItems: "center", justifyContent: "center" },
-  categoryLegend: { width: 178, height: 110, flexShrink: 0, justifyContent: "center", gap: 8 },
-  categoryLegendRow: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 7 },
-  categoryLegendLabel: { flexDirection: "row", alignItems: "center", gap: 7 },
-  categoryLegendDot: { width: 9, height: 9, borderRadius: 5 },
-  categoryName: { fontSize: 12, fontWeight: "600" },
-  categoryValue: { fontSize: 12 },
-  categoryProgress: { height: 7, borderRadius: 4 },
-  alertCard: { borderRadius: 16, marginBottom: 12, borderWidth: 1, elevation: 1 },
-  sectionTitle: { fontSize: 17, fontWeight: "800", marginBottom: 10 },
-  alertRow: { flexDirection: "row", gap: 8, marginBottom: 10 },
-  pill: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
-  pillText: { fontWeight: "700", fontSize: 12 },
-  healthRow: { flexDirection: "row", alignItems: "flex-start", gap: 10, paddingVertical: 8, borderBottomWidth: 1, minWidth: 0 },
-  healthTitle: { fontWeight: "700", flexShrink: 1 },
-  healthMeta: { fontSize: 12, marginTop: 2 },
-  statusChip: { borderRadius: 12 },
-  section: { marginBottom: 12 },
-  quickRow: { flexDirection: "row", gap: 8 },
-  quickCard: { flex: 1, minWidth: 0, alignItems: "center", borderRadius: 16, padding: 14, paddingBottom: 18, borderWidth: 1, borderTopWidth: 3, borderBottomWidth: 3, elevation: 3 },
-  quickContent: { width: "100%", alignItems: "center" },
-  quickIcon: { width: 40, height: 40, borderRadius: 12, alignItems: "center", justifyContent: "center", marginBottom: 8 },
-  quickLabel: { fontSize: 12, lineHeight: 16, fontWeight: "700", flexShrink: 1, textAlign: "center" },
-  listCard: { borderRadius: 16, marginBottom: 12, borderWidth: 1, elevation: 3 },
-  cardHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  restockSubtitle: { fontSize: 13, marginTop: 2 },
+
+  flatStatRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginBottom: 14,
+    elevation: 0,
+  },
+  statCell: { flex: 1, alignItems: "center", minWidth: 0 },
+  statNumber: { fontSize: 22, fontWeight: "800", lineHeight: 26 },
+  statCaption: { fontSize: 11, fontWeight: "600", marginTop: 2, textAlign: "center" },
+  statDivider: { width: 1, height: 28 },
+
+  desktopRow: { flexDirection: "row", gap: 16, alignItems: "flex-start" },
+  desktopCol: { flex: 1, minWidth: 0 },
+
+  card: { borderRadius: 16, marginBottom: 12, borderWidth: 1, elevation: 0 },
+  cardHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  sectionTitle: { fontSize: 17, fontWeight: "700" },
+
   activityRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, borderBottomWidth: 1, minWidth: 0 },
-  activityIcon: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center" },
-  activityTitle: { fontWeight: "700", flexShrink: 1 },
+  activityIcon: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  activityTitle: { fontWeight: "700", fontSize: 14, flexShrink: 1 },
   activityMeta: { fontSize: 12, marginTop: 2 },
-  activityQty: { fontWeight: "800", flexShrink: 0 },
+  activityQty: { fontWeight: "800", fontSize: 14, flexShrink: 0 },
+  emptyListText: { fontSize: 13, paddingVertical: 12, textAlign: "center" },
+
+  healthRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8, borderBottomWidth: 1, minWidth: 0 },
+  healthTitle: { fontWeight: "600", fontSize: 14, flexShrink: 1 },
+  healthMeta: { fontSize: 12, marginTop: 2 },
+  statusChip: { borderRadius: 8, flexShrink: 0 },
+
+  chartContent: { paddingTop: 12, paddingBottom: 16 },
+  weeklyHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
+  weeklyTitle: { fontSize: 16, fontWeight: "700" },
+  weeklyDate: { fontSize: 11 },
+  weeklyLegend: { alignItems: "center", marginTop: 4 },
+
+  categoryContent: { paddingTop: 16, paddingHorizontal: 16, paddingBottom: 20 },
+  categoryTitle: { fontSize: 16, fontWeight: "700", marginBottom: 12 },
+  categoryChartLayout: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
+  categoryChartLayoutFabSafe: { paddingRight: 80 },
+  pieWrap: { width: 110, height: 110, flexShrink: 0, alignItems: "center", justifyContent: "center" },
+  categoryLegend: { flex: 1, minWidth: 0, justifyContent: "center", gap: 6 },
+  categoryLegendRow: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 4, minWidth: 0 },
+  categoryLegendLabel: { flexDirection: "row", alignItems: "center", gap: 4, flex: 1, minWidth: 0, marginRight: 6 },
+  categoryLegendDot: { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
+  categoryName: { fontSize: 12, fontWeight: "600", flexShrink: 1, minWidth: 0 },
+  categoryValue: { fontSize: 12, fontWeight: "700", flexShrink: 0, marginLeft: 4 },
+
+  fabGroup: { position: "absolute", left: "50%", right: "auto", bottom: 86, zIndex: 20, elevation: 20, transform: [{ translateX: -32 }] },
+  webFabGroup: { position: "absolute", left: "50%", right: "auto", bottom: 86, zIndex: 20, elevation: 20, alignItems: "center", gap: 10, transform: [{ translateX: -125 }] },
+  webActionFab: { marginBottom: 0 },
+  webMainFab: { marginTop: 2 },
 });

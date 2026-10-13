@@ -101,7 +101,7 @@ export function buildActivityLogHtml(state: FreshMartState) {
         </style>
       </head>
       <body>
-        <h1>FreshMart Activity Log</h1>
+        <h1>StockTrack Activity Log</h1>
         <p>Generated ${new Date().toLocaleString()}</p>
         <table>
           <thead>
@@ -157,7 +157,7 @@ export function buildInventoryHtml(state: FreshMartState) {
         </style>
       </head>
       <body>
-        <h1>FreshMart Inventory Report</h1>
+        <h1>StockTrack Inventory Report</h1>
         <p>Generated ${new Date().toLocaleString()}</p>
         <table>
           <thead>
@@ -275,15 +275,15 @@ export async function printInventoryData(state: FreshMartState) {
 }
 
 export async function downloadInventoryExcel(state: FreshMartState) {
-  const filename = `freshmart-inventory-${new Date().toISOString().slice(0, 10)}.csv`;
-  await saveOrShareFile(buildInventoryCsv(state), filename, "text/csv", "Save inventory as Excel (CSV)", "public.comma-separated-values-text");
+  const filename = `stocktrack-inventory-${new Date().toISOString().slice(0, 10)}.csv`;
+  await saveOrShareFile(toCsv(["SKU", "Name", "Category", "Current Stock", "Safety Threshold", "Expiry Date", "Unit Price", "Safety Status", "Expiry Status"], buildRows(state).map((row) => [row.sku, row.name, row.category, row.currentStock, row.lowStockThreshold, row.expiry, row.unitPrice, row.safety, row.expiryStatus])), filename, "text/csv", "Save inventory as CSV", "com.microsoft.excel.csv");
 }
 
 export async function downloadInventoryWord(state: FreshMartState) {
-  const filename = `freshmart-inventory-${new Date().toISOString().slice(0, 10)}.doc`;
-  const header = ["SKU", "Name", "Category", "Current", "Safety", "Expiry", "Price", "Safety Status", "Expiry Status"];
+  const filename = `stocktrack-inventory-${new Date().toISOString().slice(0, 10)}.doc`;
+  const header = ["SKU", "Name", "Category", "Current Stock", "Safety Threshold", "Expiry Date", "Unit Price", "Safety Status", "Expiry Status"];
   const rows = buildRows(state).map((row) => [row.sku, row.name, row.category, row.currentStock, row.lowStockThreshold, row.expiry, row.unitPrice, row.safety, row.expiryStatus]);
-  await saveOrShareFile(wordDocument("FreshMart Inventory Report", header, rows), filename, "application/msword", "Save inventory as Word document", "com.microsoft.word.doc");
+  await saveOrShareFile(wordDocument("StockTrack Inventory Report", header, rows), filename, "application/msword", "Save inventory as Word document", "com.microsoft.word.doc");
 }
 
 export async function printActivityLog(state: FreshMartState) {
@@ -291,13 +291,15 @@ export async function printActivityLog(state: FreshMartState) {
 }
 
 export async function downloadActivityLogExcel(state: FreshMartState) {
-  const filename = `freshmart-activity-log-${new Date().toISOString().slice(0, 10)}.csv`;
-  await saveOrShareFile(buildActivityLogCsv(state), filename, "text/csv", "Save activity log as Excel (CSV)", "public.comma-separated-values-text");
+  const filename = `stocktrack-activity-log-${new Date().toISOString().slice(0, 10)}.csv`;
+  const header = ["Date", "Time", "Performed By", "Action", "Product", "SKU", "Quantity", "Reason", "Note"];
+  const rows = buildActivityRows(state).map((row) => [row.date, row.time, row.performedBy, row.action, row.product, row.sku, row.quantity, row.reason, row.note]);
+  await saveOrShareFile(toCsv(header, rows), filename, "text/csv", "Save activity log as Excel (CSV)", "public.comma-separated-values-text");
 }
 
 export async function downloadActivityLogWord(state: FreshMartState) {
-  const filename = `freshmart-activity-log-${new Date().toISOString().slice(0, 10)}.doc`;
+  const filename = `stocktrack-activity-log-${new Date().toISOString().slice(0, 10)}.doc`;
   const header = ["Date", "Time", "Performed By", "Action", "Product", "SKU", "Quantity", "Reason", "Note"];
   const rows = buildActivityRows(state).map((row) => [row.date, row.time, row.performedBy, row.action, row.product, row.sku, row.quantity, row.reason, row.note]);
-  await saveOrShareFile(wordDocument("FreshMart Activity Log", header, rows), filename, "application/msword", "Save activity log as Word document", "com.microsoft.word.doc");
+  await saveOrShareFile(wordDocument("StockTrack Activity Log", header, rows), filename, "application/msword", "Save activity log as Word document", "com.microsoft.word.doc");
 }

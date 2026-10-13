@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Redirect, useRouter } from "expo-router";
+import { Redirect, useLocalSearchParams, useRouter, type Href } from "expo-router";
 import { useState } from "react";
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from "react-native";
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Button, Card, Text, TextInput, Title, useTheme } from "react-native-paper";
 import Animated, { FadeIn, FadeInDown, FadeInUp, FadeOutUp } from "react-native-reanimated";
 
@@ -11,17 +11,20 @@ import { translate } from "../lib/i18n";
 
 export default function LoginScreen() {
   const router = useRouter();
+  const { email: invitedEmail, invite } = useLocalSearchParams<{ email?: string; invite?: string }>();
   const theme = useTheme();
-  const { session, signIn, signUp, signInWithGoogle, getHomeRoute } = useAuth();
+  const { session, signIn, signUp, signInWithGoogle, recoverPassword, getHomeRoute } = useAuth();
   const { state } = useStore();
   const language = state.user.preferences.language;
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(invite === "1" && invitedEmail ? invitedEmail : "");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [createAccount, setCreateAccount] = useState(false);
+  const [createAccount, setCreateAccount] = useState(invite === "1" && Boolean(invitedEmail));
+  const [recovering, setRecovering] = useState(false);
   const [name, setName] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
 
@@ -31,6 +34,7 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     setError("");
+    setSuccessMessage("");
     setLoginLoading(true);
     const result = await signIn(email, password);
     setLoginLoading(false);
@@ -39,11 +43,11 @@ export default function LoginScreen() {
       setError(result.message);
       return;
     }
-
   };
 
   const handleCreateAccount = async () => {
     setError("");
+    setSuccessMessage("");
 
     if (password !== confirmPassword) {
       setError("Passwords do not match.");
@@ -62,7 +66,7 @@ export default function LoginScreen() {
       return;
     }
 
-    setError(result.message);
+    setSuccessMessage(result.message);
     setCreateAccount(false);
     setPassword("");
     setConfirmPassword("");
@@ -70,24 +74,44 @@ export default function LoginScreen() {
 
   const handleBackToLogin = () => {
     setCreateAccount(false);
+    setRecovering(false);
     setName("");
     setPassword("");
     setConfirmPassword("");
     setError("");
+    setSuccessMessage("");
     router.replace("/login");
   };
 
-  const handleGoogleLogin = async () => {
+  const handleRecoverPassword = async () => {
     setError("");
-    setGoogleLoading(true);
-    const result = await signInWithGoogle();
-    setGoogleLoading(false);
+    setSuccessMessage("");
+    setLoginLoading(true);
+    const result = await recoverPassword(email);
+    setLoginLoading(false);
 
     if (!result.success) {
       setError(result.message);
       return;
     }
 
+    setSuccessMessage(result.message);
+  };
+
+  const handleGoogleLogin = async () => {
+    setError("");
+    setSuccessMessage("");
+    setGoogleLoading(true);
+    try {
+      const result = await signInWithGoogle();
+      if (!result.success) {
+        setError(result.message);
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Google sign-in could not be completed.");
+    } finally {
+      setGoogleLoading(false);
+    }
   };
 
   return (
@@ -111,12 +135,12 @@ export default function LoginScreen() {
         <Animated.View entering={FadeInUp.duration(500).delay(120)}>
         <Card style={[styles.loginCard, Platform.OS === "web" && styles.webLoginCard, { backgroundColor: theme.colors.background, borderColor: theme.colors.background }]}> 
           <Card.Content style={Platform.OS === "web" ? styles.webCardContent : undefined}>
-            <Title style={[styles.welcome, Platform.OS === "web" && styles.webWelcome, { color: theme.colors.onSurface }]}>{createAccount ? "Create Account" : translate(language, "welcomeBack")}</Title>
-            <Text style={[styles.subtitle, Platform.OS === "web" && styles.webSubtitle, { color: theme.colors.onSurfaceVariant }]}>{createAccount ? "Create your StockTrack inventory account" : translate(language, "loginSubtitle")}</Text>
+            <Title style={[styles.welcome, Platform.OS === "web" && styles.webWelcome, { color: theme.colors.onSurface }]}>{createAccount ? translate(language, "createAccountButton") : recovering ? translate(language, "resetPasswordTitle") : translate(language, "welcomeBack")}</Title>
+            <Text style={[styles.subtitle, Platform.OS === "web" && styles.webSubtitle, { color: theme.colors.onSurfaceVariant }]}>{createAccount ? translate(language, "createAccountSubtitle") : recovering ? translate(language, "resetPasswordSubtitle") : translate(language, "loginSubtitle")}</Text>
 
             {createAccount ? (
               <Animated.View entering={FadeInDown.duration(300)} exiting={FadeOutUp.duration(200)}>
-                <Text style={[styles.label, { color: theme.colors.onSurface }]}>Full Name</Text>
+                <Text style={[styles.label, { color: theme.colors.onSurface }]}>{translate(language, "nameInputLabel")}</Text>
                 <TextInput mode="outlined" value={name} onChangeText={setName} autoCapitalize="words" importantForAutofill="no" outlineColor={theme.colors.outline} activeOutlineColor={theme.colors.primary} style={[styles.input, { backgroundColor: theme.colors.background }]} />
               </Animated.View>
             ) : null}
@@ -134,45 +158,60 @@ export default function LoginScreen() {
               style={[styles.input, { backgroundColor: theme.colors.background }]}
             />
 
-            <Text style={[styles.label, { color: theme.colors.onSurface }]}>{translate(language, "passwordLabel")}</Text>
-            <TextInput
-              mode="outlined"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry={!showPassword}
-              importantForAutofill="no"
-              outlineColor={theme.colors.outline}
-              activeOutlineColor={theme.colors.primary}
-              style={[styles.input, { backgroundColor: theme.colors.background }]}
-              right={<TextInput.Icon icon={showPassword ? "eye-off" : "eye"} onPress={() => setShowPassword((current) => !current)} />}
-            />
+            {!recovering ? <>
+              <Text style={[styles.label, { color: theme.colors.onSurface }]}>{translate(language, "passwordLabel")}</Text>
+              <TextInput
+                mode="outlined"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPassword}
+                importantForAutofill="no"
+                outlineColor={theme.colors.outline}
+                activeOutlineColor={theme.colors.primary}
+                style={[styles.input, { backgroundColor: theme.colors.background }]}
+                right={<TextInput.Icon icon={showPassword ? "eye-off" : "eye"} onPress={() => setShowPassword((current) => !current)} />}
+              />
+            </> : null}
 
             {createAccount ? (
               <Animated.View entering={FadeInDown.duration(300).delay(50)} exiting={FadeOutUp.duration(200)}>
-                <Text style={[styles.label, { color: theme.colors.onSurface }]}>Confirm Password</Text>
+                <Text style={[styles.label, { color: theme.colors.onSurface }]}>{translate(language, "confirmPasswordLabel")}</Text>
                 <TextInput mode="outlined" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry={!showPassword} autoCapitalize="none" importantForAutofill="no" outlineColor={theme.colors.outline} activeOutlineColor={theme.colors.primary} style={[styles.input, { backgroundColor: theme.colors.background }]} />
               </Animated.View>
             ) : null}
 
-            {!createAccount ? <View style={styles.forgotRow}>
-              <Button mode="text" compact textColor={theme.colors.primary} onPress={() => setError(translate(language, "passwordResetHelp"))}>
+            {!createAccount && !recovering ? <View style={styles.forgotRow}>
+              <Button mode="text" compact textColor={theme.colors.primary} onPress={() => { setRecovering(true); setError(""); setSuccessMessage(""); }}>
                 {translate(language, "forgotPassword")}
               </Button>
             </View> : null}
 
-              <Button mode="contained" loading={loginLoading} disabled={loginLoading || googleLoading} onPress={createAccount ? handleCreateAccount : handleLogin} style={[styles.signInButton, Platform.OS === "web" && styles.webSignInButton]} contentStyle={[styles.signInContent, Platform.OS === "web" && styles.webSignInContent]}>
-              {createAccount ? "Create Account" : translate(language, "signInButton")}
+              <Button mode="contained" loading={loginLoading} disabled={loginLoading || googleLoading} onPress={createAccount ? handleCreateAccount : recovering ? handleRecoverPassword : handleLogin} style={[styles.signInButton, Platform.OS === "web" && styles.webSignInButton]} contentStyle={[styles.signInContent, Platform.OS === "web" && styles.webSignInContent]}>
+              {createAccount ? translate(language, "createAccountButton") : recovering ? translate(language, "sendResetLink") : translate(language, "signInButton")}
             </Button>
 
-            <Button mode="outlined" icon="google" loading={googleLoading} disabled={googleLoading} onPress={handleGoogleLogin} style={styles.googleButton} contentStyle={[styles.signInContent, Platform.OS === "web" && styles.webSignInContent]}>
-              Continue with Google
-            </Button>
+            {!recovering ? <Button mode="outlined" icon="google" loading={googleLoading} disabled={googleLoading} onPress={handleGoogleLogin} style={styles.googleButton} contentStyle={[styles.signInContent, Platform.OS === "web" && styles.webSignInContent]}>
+              {translate(language, "continueWithGoogle")}
+            </Button> : null}
 
-            <Button mode="text" icon={createAccount ? "arrow-left" : "account-plus-outline"} onPress={createAccount ? handleBackToLogin : () => { setCreateAccount(true); setError(""); setPassword(""); setConfirmPassword(""); }} style={styles.switchButton}>
-              {createAccount ? "Back to Log In" : "Create an Account"}
+            <View style={styles.legalNotice}>
+              <Text style={{ color: theme.colors.onSurfaceVariant }}>{translate(language, "legalAgreementPrefix")}{" "}</Text>
+              <Pressable onPress={() => router.push("/terms-of-service" as Href)} accessibilityRole="link">
+                <Text style={[styles.legalLink, { color: theme.colors.primary }]}>{translate(language, "termsOfService")}</Text>
+              </Pressable>
+              <Text style={{ color: theme.colors.onSurfaceVariant }}>{" "}{translate(language, "legalAgreementAnd")}{" "}</Text>
+              <Pressable onPress={() => router.push("/privacy-policy" as Href)} accessibilityRole="link">
+                <Text style={[styles.legalLink, { color: theme.colors.primary }]}>{translate(language, "privacyPolicy")}</Text>
+              </Pressable>
+              <Text style={{ color: theme.colors.onSurfaceVariant }}>.</Text>
+            </View>
+
+            <Button mode="text" icon={createAccount || recovering ? "arrow-left" : "account-plus-outline"} onPress={createAccount || recovering ? handleBackToLogin : () => { setCreateAccount(true); setError(""); setSuccessMessage(""); setPassword(""); setConfirmPassword(""); }} style={styles.switchButton}>
+              {createAccount || recovering ? translate(language, "backToLogin") : translate(language, "createAccountButton")}
             </Button>
 
             {error ? <Text style={[styles.errorText, { color: theme.colors.error }]}>{error}</Text> : null}
+            {successMessage ? <Text style={[styles.errorText, { color: theme.colors.secondary }]}>{successMessage}</Text> : null}
 
             <Text style={[styles.footer, { color: theme.colors.onSurfaceVariant }]}>{translate(language, "footerText")}</Text>
           </Card.Content>
@@ -212,6 +251,8 @@ const styles = StyleSheet.create({
   biometricButton: { marginTop: 12, borderRadius: 16 },
   switchButton: { marginTop: 4 },
   googleButton: { marginTop: 10, borderRadius: 16 },
+  legalNotice: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", marginTop: 12, paddingHorizontal: 8 },
+  legalLink: { textDecorationLine: "underline" },
   signInContent: { height: 52 },
   webSignInContent: { height: 43 },
   errorText: { marginTop: 12, textAlign: "center" },

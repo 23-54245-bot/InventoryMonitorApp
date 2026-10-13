@@ -16,7 +16,9 @@
     "android": {
       "permissions": [
         "CAMERA",
-        "android.permission.CAMERA",
+        "android.permission.CAMERA"
+      ],
+      "blockedPermissions": [
         "android.permission.RECORD_AUDIO"
       ],
       "adaptiveIcon": {
@@ -40,6 +42,12 @@
         {
           "cameraPermission": "Allow StockTrack to access your camera for barcode scanning",
           "barcodeScannerEnabled": true
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow StockTrack to use Face ID to unlock your signed-in account."
         }
       ],
       "expo-sharing",

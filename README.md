@@ -16,6 +16,33 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
    npx expo start
    ```
 
+## Quick terminal shortcuts
+
+Use these from the project root when you want to publish updates or create an Android build without going through the app UI.
+
+- OTA update to preview:
+  ```bash
+  npx eas update --channel preview --environment preview --message "Fix: update description" --non-interactive
+  ```
+
+- OTA update to production:
+  ```bash
+  npx eas update --channel production --environment production --message "Production release: update description" --non-interactive
+  ```
+
+- Build Android APK (preview/internal test):
+  ```bash
+  npx eas build --platform android --profile preview --non-interactive
+  ```
+
+- Build Android App Bundle (production):
+  ```bash
+  npx eas build --platform android --profile production --non-interactive
+  ```
+
+- Preview profile note:
+  The `preview` profile in [eas.json](eas.json) is configured for `distribution: "internal"` and `buildType: "apk"`.
+
 ## Supabase backend
 
 The backend schema is in `supabase/schema.sql` and the Expo client is in `src/lib/supabase.ts`.
@@ -26,7 +53,7 @@ The backend schema is in `supabase/schema.sql` and the Expo client is in `src/li
 4. Add the project URL and anon key to `.env.local`.
 5. Restart Expo with `npx expo start --clear`.
 
-The schema enables row-level security for stores, profiles, products, stock movements, and notifications. Never put a Supabase service-role key in the Expo app.
+The schema enables row-level security for stores, profiles, products, stock movements, and notifications. It also installs the RPCs used for idempotent stock-change merging; rerun the latest schema before testing offline sync. Never put a Supabase service-role key in the Expo app.
 
 ### Google login
 
@@ -41,6 +68,31 @@ For the VS Code web preview, add the callback URL under Supabase **Authenticatio
 Self-created accounts receive the `Admin` role. Accounts invited by an Admin receive the invited role. After changing this policy, run the updated `supabase/schema.sql` in the Supabase SQL Editor; existing profile roles are unchanged.
 
 Each account owns a separate store. The schema migration also assigns existing profiles without a store to their own store so their team and inventory data remain isolated.
+
+### Team invitation email
+
+Team invitations are recorded in `public.invites`. To enable initial and resent invitation emails, deploy the `send-team-invite` Edge Function and configure its Resend API key, verified sender address, and deployed web app origin.
+
+`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are available as Supabase Edge Function defaults. Never add the service-role key or Resend API key to the Expo app or `.env` file. The sender domain must be verified in Resend. Run the updated `supabase/schema.sql` before using the Pending Invites section, then deploy and configure the function:
+
+```bash
+supabase functions deploy send-team-invite
+supabase secrets set RESEND_API_KEY="your-resend-api-key" INVITE_FROM_EMAIL="StockTrack <invites@your-domain.com>" APP_URL="https://your-app.example.com"
+```
+
+Invitation links open the web app’s sign-up form with the invitee email prefilled; the invitee must create an account using that same email.
+
+### Release regression checks
+
+Run these against a non-production Supabase project and test accounts before a store rollout:
+
+- **Invites:** send an invite, confirm the email and role, resend it, revoke it, and confirm the revoked invitation cannot grant access to the store. Also verify an invitee using a different email does not join the invited store.
+- **Offline sync:** take one device offline, record stock movements and a sale, then use another device to change the same product. Reconnect and sync the first device; confirm stock movements merge, each receipt/line/movement appears once, and a sale that would make stock negative stays pending with a review error. Confirm the signed-in user's role and allowed screens do not change while offline, then verify the role refreshes from Supabase after reconnecting. Repeat with a failed network request and sync more than once.
+- **Uploads:** deny or interrupt a store-image upload and confirm the UI reports failure and keeps the previous saved image; retry with a valid image.
+- **Password recovery:** complete recovery on web and a native build, then retry an expired link and a mismatched password. Confirm neither failure changes the password.
+- **Role restrictions:** test Admin, Manager, and Staff accounts through both navigation and direct screen URLs. Confirm Staff cannot open reports/settings, and non-Admins cannot change roles, statuses, or invitations even when attempting the request directly.
+
+These checks require a configured backend and device/browser sessions; lint and TypeScript checks do not substitute for them.
 
 In the output, you'll find options to open the app in a
 

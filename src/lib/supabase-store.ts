@@ -5,7 +5,8 @@
  * types and the database's snake_case column names.
  */
 
-import type { NotificationItem, Product, SaleTransaction, StockMovement } from "../data/freshmart";
+import { File } from "expo-file-system";
+import type { CashShift, DebtPayment, NotificationItem, Product, ProductBatch, SaleTransaction, StockMovement, StorePaymentQRs } from "../data/freshmart";
 import { supabase } from "./supabase";
 
 // ─── Products ────────────────────────────────────────────────────────────────
@@ -24,6 +25,10 @@ function rowToProduct(row: Record<string, unknown>): Product {
     srpPrice: row.srp_price != null ? Number(row.srp_price) : undefined,
     expiryDate: (row.expiry_date as string | null) ?? undefined,
     manufacturingDate: (row.manufacturing_date as string | null) ?? undefined,
+    hasTingi: Boolean(row.has_tingi ?? false),
+    tingiUnit: (row.tingi_unit as string | null) ?? undefined,
+    tingiConversionRate: row.tingi_conversion_rate != null ? Number(row.tingi_conversion_rate) : undefined,
+    tingiPrice: row.tingi_price != null ? Number(row.tingi_price) : undefined,
     icon: (row.icon as string | null) ?? "📦",
     imageUri: (row.image_uri as string | null) ?? undefined,
     createdAt: row.created_at as string,
@@ -46,6 +51,10 @@ function productToRow(storeId: string, product: Product) {
     srp_price: product.srpPrice ?? null,
     expiry_date: product.expiryDate ?? null,
     manufacturing_date: product.manufacturingDate ?? null,
+    has_tingi: Boolean(product.hasTingi),
+    tingi_unit: product.tingiUnit ?? null,
+    tingi_conversion_rate: product.tingiConversionRate ?? null,
+    tingi_price: product.tingiPrice ?? null,
     icon: product.icon,
     image_uri: product.imageUri ?? null,
     updated_at: new Date().toISOString(),
@@ -63,11 +72,20 @@ export async function fetchProducts(storeId: string): Promise<Product[]> {
   return (data as Record<string, unknown>[]).map(rowToProduct);
 }
 
-export async function upsertProduct(storeId: string, product: Product): Promise<boolean> {
-  const { error } = await supabase
-    .from("products")
-    .upsert(productToRow(storeId, product), { onConflict: "id" });
-  return !error;
+export async function syncProductChange(
+  storeId: string,
+  product: Product,
+  stockDelta: number,
+  operationId: string,
+  createIfMissing: boolean,
+): Promise<{ success: boolean; error?: string }> {
+  const { error } = await supabase.rpc("sync_product_change", {
+    p_product: productToRow(storeId, product),
+    p_stock_delta: stockDelta,
+    p_operation_id: operationId,
+    p_create_if_missing: createIfMissing,
+  });
+  return error ? { success: false, error: error.message } : { success: true };
 }
 
 export async function removeProduct(productId: string): Promise<boolean> {
@@ -105,22 +123,22 @@ export async function fetchMovements(storeId: string): Promise<StockMovement[]> 
   return (data as Record<string, unknown>[]).map(rowToMovement);
 }
 
-export async function insertMovement(
+export async function applyStockMovement(
   storeId: string,
-  userId: string,
   movement: StockMovement,
-): Promise<boolean> {
-  const { error } = await supabase.from("stock_movements").insert({
-    store_id: storeId,
-    product_id: movement.productId,
-    user_id: userId,
-    type: movement.type,
-    reason: movement.reason ?? null,
-    quantity: movement.quantity,
-    performed_by: movement.performedBy,
-    note: movement.note ?? null,
+): Promise<{ success: boolean; error?: string }> {
+  const { error } = await supabase.rpc("apply_stock_movement", {
+    p_store_id: storeId,
+    p_product_id: movement.productId,
+    p_client_id: movement.id,
+    p_type: movement.type,
+    p_reason: movement.reason ?? null,
+    p_quantity: movement.quantity,
+    p_performed_by: movement.performedBy,
+    p_note: movement.note ?? null,
+    p_created_at: movement.timestamp,
   });
-  return !error;
+  return error ? { success: false, error: error.message } : { success: true };
 }
 
 // ─── Notifications ────────────────────────────────────────────────────────────
@@ -145,7 +163,8 @@ export async function fetchNotifications(storeId: string): Promise<NotificationI
     .order("created_at", { ascending: false })
     .limit(200);
 
-  if (error || !data) return [];
+  if (error) throw error;
+  if (!data) return [];
   return (data as Record<string, unknown>[]).map(rowToNotification);
 }
 
@@ -218,6 +237,10 @@ export async function fetchSales(storeId: string): Promise<SaleTransaction[]> {
     cashierName: row.cashier_name ?? "",
     note: row.note ?? undefined,
     timestamp: row.created_at,
+    status: row.status ?? "completed",
+    voidReason: row.void_reason ?? undefined,
+    voidedAt: row.voided_at ?? undefined,
+    voidedBy: row.voided_by ?? undefined,
     items: (row.sale_items ?? []).map((item: any) => ({
       id: item.id,
       productId: item.product_id,
@@ -226,6 +249,7 @@ export async function fetchSales(storeId: string): Promise<SaleTransaction[]> {
       quantity: Number(item.quantity),
       unitPrice: Number(item.unit_price),
       totalPrice: Number(item.total_price),
+      unitCost: item.unit_cost != null ? Number(item.unit_cost) : undefined,
     })),
   }));
 }
@@ -237,7 +261,8 @@ export async function insertSale(
 ): Promise<{ success: boolean; saleId?: string }> {
   const { data: saleRow, error: saleError } = await supabase
     .from("sales")
-    .insert({
+    .upsert({
+      id: sale.id,
       store_id: storeId,
       receipt_number: sale.receiptNumber,
       cashier_id: userId || null,
@@ -251,19 +276,21 @@ export async function insertSale(
       amount_tendered: sale.amountTendered,
       change_amount: sale.changeAmount,
       note: sale.note ?? null,
+      status: sale.status ?? "completed",
       created_at: sale.timestamp,
-    })
+    }, { onConflict: "id", ignoreDuplicates: true })
     .select("id")
-    .single();
+    .maybeSingle();
 
-  if (saleError || !saleRow) {
+  if (saleError) {
     return { success: false };
   }
 
-  const saleId = saleRow.id;
+  const saleId = saleRow?.id ?? sale.id;
 
   if (sale.items.length > 0) {
     const itemsToInsert = sale.items.map((item) => ({
+      id: item.id,
       sale_id: saleId,
       product_id: item.productId || null,
       product_name: item.productName,
@@ -271,13 +298,39 @@ export async function insertSale(
       quantity: item.quantity,
       unit_price: item.unitPrice,
       total_price: item.totalPrice,
+      unit_cost: item.unitCost ?? null,
       created_at: sale.timestamp,
     }));
 
-    await supabase.from("sale_items").insert(itemsToInsert);
+    const { error: itemsError } = await supabase
+      .from("sale_items")
+      .upsert(itemsToInsert, { onConflict: "id", ignoreDuplicates: true });
+    if (itemsError) {
+      return { success: false, saleId };
+    }
   }
 
   return { success: true, saleId };
+}
+
+export async function voidSale(
+  storeId: string,
+  saleId: string,
+  reason: string,
+  voidedBy: string,
+): Promise<boolean> {
+  const { error } = await supabase
+    .from("sales")
+    .update({
+      status: "voided",
+      void_reason: reason,
+      voided_at: new Date().toISOString(),
+      voided_by: voidedBy,
+    })
+    .eq("id", saleId)
+    .eq("store_id", storeId);
+
+  return !error;
 }
 
 // ─── Customers ──────────────────────────────────────────────────────────────
@@ -340,7 +393,8 @@ export async function fetchDebts(storeId: string) {
     .eq("store_id", storeId)
     .order("created_at", { ascending: false });
 
-  if (error || !data) return [];
+  if (error) throw error;
+  if (!data) return [];
   return (data as any[]).map((row) => ({
     id: row.id,
     storeId: row.store_id,
@@ -360,8 +414,33 @@ export async function fetchDebts(storeId: string) {
   }));
 }
 
+export async function fetchDebtPayments(storeId: string): Promise<DebtPayment[]> {
+  const { data, error } = await supabase
+    .from("debt_payments")
+    .select("*")
+    .eq("store_id", storeId)
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  if (error) throw error;
+  if (!data) return [];
+
+  return data.map((row) => ({
+    id: row.id,
+    storeId: row.store_id,
+    debtId: row.debt_id,
+    customerId: row.customer_id,
+    amount: Number(row.amount),
+    paymentMethod: row.payment_method,
+    referenceNumber: row.reference_number ?? undefined,
+    recordedBy: row.recorded_by ?? "",
+    note: row.note ?? undefined,
+    createdAt: row.created_at,
+  }));
+}
+
 export async function insertDebt(storeId: string, debt: any): Promise<boolean> {
-  const { error } = await supabase.from("debts").insert({
+  const { error } = await supabase.from("debts").upsert({
     id: debt.id,
     store_id: storeId,
     customer_id: debt.customerId,
@@ -377,7 +456,7 @@ export async function insertDebt(storeId: string, debt: any): Promise<boolean> {
     items_summary: debt.itemsSummary ?? null,
     created_at: debt.createdAt,
     updated_at: debt.updatedAt,
-  });
+  }, { onConflict: "id", ignoreDuplicates: true });
   return !error;
 }
 
@@ -385,13 +464,7 @@ export async function updateDebtPayment(
   storeId: string,
   debtId: string,
   customerId: string,
-  payment: {
-    amount: number;
-    paymentMethod: "cash" | "gcash" | "maya" | "other";
-    referenceNumber?: string;
-    recordedBy: string;
-    note?: string;
-  },
+  payment: DebtPayment,
   newAmountPaid: number,
   newBalance: number,
   newStatus: string,
@@ -409,8 +482,8 @@ export async function updateDebtPayment(
 
   if (debtErr) return false;
 
-  // Insert payment log
-  await supabase.from("debt_payments").insert({
+  const { error: paymentError } = await supabase.from("debt_payments").upsert({
+    id: payment.id,
     store_id: storeId,
     debt_id: debtId,
     customer_id: customerId,
@@ -419,9 +492,10 @@ export async function updateDebtPayment(
     reference_number: payment.referenceNumber ?? null,
     recorded_by: payment.recordedBy,
     note: payment.note ?? null,
-  });
+    created_at: payment.createdAt,
+  }, { onConflict: "id" });
 
-  return true;
+  return !paymentError;
 }
 
 // ─── Audit Logs ─────────────────────────────────────────────────────────────
@@ -463,28 +537,213 @@ export async function insertAuditLog(storeId: string, log: any): Promise<boolean
 
 // ─── Store QR Codes ─────────────────────────────────────────────────────────
 
+function getStoreMediaPath(uri: string): string | undefined {
+  try {
+    const pathname = new URL(uri).pathname;
+    const match = pathname.match(/\/storage\/v1\/object\/(?:public|sign)\/store-media\/(.+)$/);
+    return match ? decodeURIComponent(match[1]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function resolveStoreMediaUri(uri?: string | null): Promise<string | undefined> {
+  if (!uri) return undefined;
+  const path = getStoreMediaPath(uri) ?? (/^[a-z][a-z0-9+.-]*:/i.test(uri) ? undefined : uri);
+  if (!path) return uri;
+
+  const { data, error } = await supabase.storage.from("store-media").createSignedUrl(path, 86400);
+  return error ? undefined : data.signedUrl;
+}
+
 export async function updateStoreQRs(
   storeId: string,
-  qrs: {
-    gcashName?: string;
-    gcashNumber?: string;
-    gcashQrUri?: string;
-    mayaName?: string;
-    mayaNumber?: string;
-    mayaQrUri?: string;
-  },
-): Promise<boolean> {
+  qrs: StorePaymentQRs,
+): Promise<StorePaymentQRs | null> {
+  const { data: existing } = await supabase
+    .from("stores")
+    .select("gcash_qr_url, maya_qr_url")
+    .eq("id", storeId)
+    .maybeSingle();
+
+  const uploadedPaths: string[] = [];
+  const uploadQr = async (uri: string | undefined, kind: "gcash" | "maya") => {
+    if (!uri) return { path: undefined, externalUrl: undefined };
+
+    const existingPath = getStoreMediaPath(uri);
+    if (existingPath) return { path: existingPath, externalUrl: undefined };
+    if (/^https?:\/\//i.test(uri)) return { path: undefined, externalUrl: uri };
+
+    const file = new File(uri);
+    const body = await file.arrayBuffer();
+    const path = `${storeId}/payment-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.jpg`;
+    const { error: uploadError } = await supabase.storage
+      .from("store-media")
+      .upload(path, body, { contentType: "image/jpeg", upsert: true, cacheControl: "3600" });
+    if (uploadError) {
+      throw uploadError;
+    }
+
+    uploadedPaths.push(path);
+    return { path, externalUrl: undefined };
+  };
+
+  let gcashQr: Awaited<ReturnType<typeof uploadQr>>;
+  let mayaQr: Awaited<ReturnType<typeof uploadQr>>;
+  try {
+    [gcashQr, mayaQr] = await Promise.all([
+      uploadQr(qrs.gcashQrUri, "gcash"),
+      uploadQr(qrs.mayaQrUri, "maya"),
+    ]);
+  } catch (error) {
+    if (uploadedPaths.length) await supabase.storage.from("store-media").remove(uploadedPaths);
+    throw error instanceof Error ? error : new Error("QR image upload failed.");
+  }
+
   const { error } = await supabase
     .from("stores")
     .update({
       gcash_name: qrs.gcashName ?? null,
       gcash_number: qrs.gcashNumber ?? null,
-      gcash_qr_url: qrs.gcashQrUri ?? null,
+      gcash_qr_url: gcashQr.path ?? gcashQr.externalUrl ?? null,
       maya_name: qrs.mayaName ?? null,
       maya_number: qrs.mayaNumber ?? null,
-      maya_qr_url: qrs.mayaQrUri ?? null,
+      maya_qr_url: mayaQr.path ?? mayaQr.externalUrl ?? null,
       updated_at: new Date().toISOString(),
     })
     .eq("id", storeId);
+  if (error) {
+    if (uploadedPaths.length) await supabase.storage.from("store-media").remove(uploadedPaths);
+    throw error;
+  }
+
+  const oldPaths = [existing?.gcash_qr_url, existing?.maya_qr_url]
+    .filter((value): value is string => typeof value === "string")
+    .map(getStoreMediaPath)
+    .filter((path): path is string => Boolean(path));
+  const nextPaths = [gcashQr.path, mayaQr.path].filter((path): path is string => Boolean(path));
+  const pathsToRemove = oldPaths.filter((path) => !nextPaths.includes(path));
+  if (pathsToRemove.length) await supabase.storage.from("store-media").remove(pathsToRemove);
+
+  const [gcashQrUri, mayaQrUri] = await Promise.all([
+    resolveStoreMediaUri(gcashQr.path ?? gcashQr.externalUrl),
+    resolveStoreMediaUri(mayaQr.path ?? mayaQr.externalUrl),
+  ]);
+  return { ...qrs, gcashQrUri, mayaQrUri };
+}
+
+
+// ─── Batches (FEFO) ──────────────────────────────────────────────────────────
+
+export async function fetchBatches(storeId: string): Promise<ProductBatch[]> {
+  const { data, error } = await supabase
+    .from("product_batches")
+    .select("*")
+    .eq("store_id", storeId)
+    .order("expiry_date", { ascending: true });
+
+  if (error || !data) return [];
+  return (data as any[]).map((row) => ({
+    id: row.id,
+    storeId: row.store_id,
+    productId: row.product_id,
+    batchNumber: row.batch_number,
+    quantity: Number(row.quantity),
+    expiryDate: row.expiry_date,
+    unitCost: Number(row.unit_cost),
+    createdAt: row.created_at,
+  }));
+}
+
+export async function upsertBatch(storeId: string, batch: ProductBatch): Promise<boolean> {
+  const { error } = await supabase
+    .from("product_batches")
+    .upsert({
+      id: batch.id.startsWith("batch-") ? undefined : batch.id,
+      store_id: storeId,
+      product_id: batch.productId,
+      batch_number: batch.batchNumber,
+      quantity: batch.quantity,
+      expiry_date: batch.expiryDate,
+      unit_cost: batch.unitCost,
+      created_at: batch.createdAt,
+    });
+  return !error;
+}
+
+export async function removeBatch(batchId: string): Promise<boolean> {
+  const { error } = await supabase
+    .from("product_batches")
+    .delete()
+    .eq("id", batchId);
+  return !error;
+}
+
+// ─── Cash Shifts ─────────────────────────────────────────────────────────────
+
+export async function fetchCashShifts(storeId: string): Promise<CashShift[]> {
+  const { data, error } = await supabase
+    .from("cash_shifts")
+    .select("*")
+    .eq("store_id", storeId)
+    .order("opened_at", { ascending: false })
+    .limit(30);
+
+  if (error || !data) return [];
+  return (data as any[]).map((row) => ({
+    id: row.id,
+    storeId: row.store_id,
+    cashierId: row.cashier_id ?? undefined,
+    cashierName: row.cashier_name,
+    openingFloat: Number(row.opening_float),
+    expectedCash: Number(row.expected_cash),
+    countedCash: row.counted_cash != null ? Number(row.counted_cash) : undefined,
+    variance: row.variance != null ? Number(row.variance) : undefined,
+    status: row.status,
+    notes: row.notes ?? undefined,
+    openedAt: row.opened_at,
+    closedAt: row.closed_at ?? undefined,
+  }));
+}
+
+export async function insertCashShift(storeId: string, shift: CashShift): Promise<{ success: boolean; id?: string }> {
+  const { data, error } = await supabase
+    .from("cash_shifts")
+    .insert({
+      store_id: storeId,
+      cashier_id: shift.cashierId ?? null,
+      cashier_name: shift.cashierName,
+      opening_float: shift.openingFloat,
+      expected_cash: shift.expectedCash,
+      status: shift.status,
+      notes: shift.notes ?? null,
+      opened_at: shift.openedAt,
+    })
+    .select("id")
+    .single();
+
+  if (error || !data) return { success: false };
+  return { success: true, id: data.id };
+}
+
+export async function closeCashShift(
+  shiftId: string,
+  countedCash: number,
+  expectedCash: number,
+  variance: number,
+  notes?: string,
+): Promise<boolean> {
+  const { error } = await supabase
+    .from("cash_shifts")
+    .update({
+      counted_cash: countedCash,
+      expected_cash: expectedCash,
+      variance,
+      status: "closed",
+      notes: notes ?? null,
+      closed_at: new Date().toISOString(),
+    })
+    .eq("id", shiftId);
+
   return !error;
 }

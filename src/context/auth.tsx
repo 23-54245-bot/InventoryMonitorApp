@@ -1,16 +1,17 @@
 import { makeRedirectUri } from "expo-auth-session";
 import Constants from "expo-constants";
 import * as WebBrowser from "expo-web-browser";
-import { createContext, ReactNode, useContext, useEffect, useState } from "react";
+import { createContext, ReactNode, useContext, useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
 
 import { readStoredString, writeStoredString } from "../lib/storage";
 import { supabase } from "../lib/supabase";
+import { clearOfflineCache, getOfflineCacheScope, processSyncQueue } from "../lib/sync-queue";
 
 export type UserRole = "Admin" | "Manager" | "Staff";
 export type EmployeeStatus = "Active" | "Inactive";
 
-export type AppRoute = "/" | "/inventory" | "/alerts" | "/reports" | "/profit" | "/profile" | "/settings" | "/scan-modal" | "/product" | "/add-product" | "/stock-movement" | "/change-password" | "/pos" | "/sales-history" | "/utang";
+export type AppRoute = "/" | "/inventory" | "/alerts" | "/reports" | "/profile" | "/settings" | "/scan-modal" | "/product" | "/add-product" | "/stock-movement" | "/change-password" | "/pos" | "/sales-history" | "/utang";
 
 export type AuthSession = {
   email: string;
@@ -27,6 +28,13 @@ export type Employee = {
   email: string;
   role: UserRole;
   status: EmployeeStatus;
+  createdAt: string;
+};
+
+export type PendingInvite = {
+  id: string;
+  email: string;
+  role: UserRole;
   createdAt: string;
 };
 
@@ -50,16 +58,21 @@ type AuthContextValue = {
   session: AuthSession | null;
   isReady: boolean;
   employees: Employee[];
+  pendingInvites: PendingInvite[];
   signIn: (email: string, password: string) => Promise<AuthResult>;
   signUp: (name: string, email: string, password: string) => Promise<AuthResult>;
   signInWithGoogle: () => Promise<AuthResult>;
-  signOut: () => void;
+  signOut: () => Promise<AuthResult>;
   refreshSession: () => Promise<void>;
   recoverPassword: (email: string) => Promise<AuthResult>;
+  resetPassword: (newPassword: string) => Promise<AuthResult>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<AuthResult>;
   addEmployee: (employee: Omit<Employee, "id" | "createdAt" | "status">) => Promise<EmployeeResult>;
   updateEmployee: (employeeId: string, patch: Partial<Omit<Employee, "id" | "createdAt">>) => Promise<EmployeeResult>;
   removeEmployee: (employeeId: string) => Promise<EmployeeResult>;
+  refreshPendingInvites: () => Promise<void>;
+  resendInvite: (email: string) => Promise<EmployeeResult>;
+  revokeInvite: (inviteId: string) => Promise<EmployeeResult>;
   getHomeRoute: (role?: UserRole) => AppRoute;
   getAllowedRoutes: (role?: UserRole) => string[];
   hasRouteAccess: (route: string, role?: UserRole) => boolean;
@@ -67,13 +80,14 @@ type AuthContextValue = {
 
 const SESSION_STORAGE_KEY = "stocktrack.auth.v2";
 const LEGACY_SESSION_STORAGE_KEY = "freshmartims.auth";
+const PROFILE_ROLE_CACHE_KEY_PREFIX = "stocktrack.profile-role.v1.";
 
 WebBrowser.maybeCompleteAuthSession();
 
 const routeAccessByRole: Record<UserRole, string[]> = {
-  Admin: ["index", "inventory", "alerts", "reports", "profit", "profile", "settings", "scan-modal", "product", "add-product", "stock-movement", "change-password", "pos", "sales-history", "utang"],
-  Manager: ["index", "inventory", "alerts", "reports", "profit", "profile", "settings", "scan-modal", "product", "add-product", "stock-movement", "change-password", "pos", "sales-history", "utang"],
-  Staff: ["index", "inventory", "alerts", "reports", "profit", "profile", "settings", "scan-modal", "product", "change-password", "pos", "sales-history", "utang"],
+  Admin: ["index", "inventory", "alerts", "reports", "profile", "settings", "scan-modal", "product", "add-product", "stock-movement", "change-password", "pos", "sales-history", "utang"],
+  Manager: ["index", "inventory", "alerts", "reports", "profile", "settings", "scan-modal", "product", "add-product", "stock-movement", "change-password", "pos", "sales-history", "utang"],
+  Staff: ["index", "inventory", "alerts", "profile", "change-password", "pos", "sales-history"],
 };
 
 const homeRouteByRole: Record<UserRole, AppRoute> = {
@@ -88,14 +102,41 @@ const roleTitles: Record<UserRole, string> = {
   Staff: "Staff Team Member",
 };
 
-async function fetchProfileRole(userId: string): Promise<UserRole> {
+async function fetchProfileRole(userId: string): Promise<UserRole | null> {
+  const roleCacheKey = `${PROFILE_ROLE_CACHE_KEY_PREFIX}${userId}`;
+  const cachedRoleValue = await readStoredString(roleCacheKey);
+  const cachedRole = cachedRoleValue === "Admin" || cachedRoleValue === "Manager" || cachedRoleValue === "Staff"
+    ? cachedRoleValue
+    : null;
+
   if (!supabase) {
-    return "Staff";
+    return cachedRole;
   }
 
-  const { data } = await supabase.from("profiles").select("role").eq("id", userId).maybeSingle();
-  const role = data?.role;
-  return role === "Admin" || role === "Manager" ? role : "Staff";
+  try {
+    const { data, error } = await supabase.from("profiles").select("role").eq("id", userId).maybeSingle();
+    if (error) {
+      console.warn("Could not refresh the signed-in user's role; keeping its last known role while offline:", error.message);
+      return cachedRole;
+    }
+
+    const role = data?.role;
+    if (role === "Admin" || role === "Manager" || role === "Staff") {
+      await writeStoredString(roleCacheKey, role);
+      return role;
+    }
+  } catch (error) {
+    console.warn(
+      "Could not refresh the signed-in user's role; keeping its last known role while offline:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
+  return null;
+}
+
+function getKnownRole(session: AuthSession | null, email: string): UserRole | undefined {
+  return session?.email.toLowerCase() === email.toLowerCase() ? session.role : undefined;
 }
 
 async function syncInvite(email: string, role: UserRole): Promise<string | null> {
@@ -127,23 +168,32 @@ function normalizeRoute(route: string) {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [authState, setAuthState] = useState<AuthStorage>(() => ({ session: null, employees: [] }));
   const [isReady, setIsReady] = useState(false);
-  const [remoteEmployees, setRemoteEmployees] = useState<Employee[] | null>(null);
+  const [remoteEmployees, setRemoteEmployees] = useState<{ email: string; employees: Employee[] } | null>(null);
+  const [remotePendingInvites, setRemotePendingInvites] = useState<{ email: string; invites: PendingInvite[] } | null>(null);
+  const googleAuthInFlight = useRef(false);
+  const currentRemoteEmployees = remoteEmployees && remoteEmployees.email === authState.session?.email.toLowerCase()
+    ? remoteEmployees.employees
+    : null;
 
-  const refreshEmployees = async () => {
+  const refreshEmployees = async (userId?: string, email?: string) => {
     if (!supabase) {
       return;
     }
 
-    const { data: currentUser } = await supabase.auth.getUser();
-    if (!currentUser.user) {
-      setRemoteEmployees(null);
-      return;
+    let activeUser = userId && email ? { id: userId, email } : null;
+    if (!activeUser) {
+      const { data: currentUser } = await supabase.auth.getUser();
+      if (!currentUser.user) {
+        setRemoteEmployees(null);
+        return;
+      }
+      activeUser = { id: currentUser.user.id, email: currentUser.user.email ?? "" };
     }
 
     const { data: currentProfile } = await supabase
       .from("profiles")
       .select("store_id")
-      .eq("id", currentUser.user.id)
+      .eq("id", activeUser.id)
       .maybeSingle();
     const profileQuery = supabase
       .from("profiles")
@@ -151,11 +201,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .order("created_at", { ascending: false });
     const { data, error } = currentProfile?.store_id
       ? await profileQuery.eq("store_id", currentProfile.store_id)
-      : await profileQuery.eq("id", currentUser.user.id);
+      : await profileQuery.eq("id", activeUser.id);
 
     if (!error && data) {
-      setRemoteEmployees(
-        data.map((row) => ({
+      setRemoteEmployees({
+        email: activeUser.email.toLowerCase(),
+        employees: data.map((row) => ({
           id: row.id,
           name: row.name ?? row.email?.split("@")[0] ?? "Unnamed",
           email: row.email ?? "",
@@ -163,8 +214,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           status: (row.status as EmployeeStatus) ?? "Active",
           createdAt: row.created_at,
         })),
-      );
+      });
     }
+  };
+
+  const refreshPendingInvites = async (userId?: string, email?: string) => {
+    if (!supabase) {
+      return;
+    }
+
+    let activeUser = userId && email ? { id: userId, email } : null;
+    if (!activeUser) {
+      const { data: currentUser } = await supabase.auth.getUser();
+      if (!currentUser.user) {
+        setRemotePendingInvites(null);
+        return;
+      }
+      activeUser = { id: currentUser.user.id, email: currentUser.user.email ?? "" };
+    }
+
+    const { data, error } = await supabase
+      .from("invites")
+      .select("id, email, role, created_at")
+      .eq("invited_by", activeUser.id)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw new Error(`Could not load pending invitations: ${error.message}`);
+    }
+
+    setRemotePendingInvites({
+      email: activeUser.email.toLowerCase(),
+      invites: (data ?? []).map((row) => ({
+        id: row.id,
+        email: row.email,
+        role: row.role as UserRole,
+        createdAt: row.created_at,
+      })),
+    });
   };
 
   useEffect(() => {
@@ -199,15 +286,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!supabase || !authState.session) {
-      setRemoteEmployees(null);
-      return;
-    }
-    setRemoteEmployees(null);
-    void refreshEmployees();
-  }, [authState.session?.email]);
-
-  useEffect(() => {
     if (!supabase) {
       return;
     }
@@ -215,6 +293,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const applySupabaseSession = (session: { user: { id: string; email?: string; user_metadata?: Record<string, unknown> } } | null) => {
       if (!session?.user) {
         setRemoteEmployees(null);
+        setRemotePendingInvites(null);
         setAuthState((current) => ({ ...current, session: null, employees: [] }));
         return;
       }
@@ -222,17 +301,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const email = session.user.email ?? "";
       const metadata = session.user.user_metadata ?? {};
       const name = typeof metadata.full_name === "string" ? metadata.full_name : typeof metadata.name === "string" ? metadata.name : email.split("@")[0];
-      const nextSession: AuthSession = {
-        email,
-        name,
-        role: "Staff",
-        title: roleTitles.Staff,
-        team: "StockTrack Store",
-      };
-      setAuthState((current) => ({ ...current, session: nextSession }));
+      setAuthState((current) => {
+        const role = getKnownRole(current.session, email) ?? "Staff";
+        return {
+          ...current,
+          session: { email, name, role, title: roleTitles[role], team: "StockTrack Store" },
+        };
+      });
+      void refreshEmployees(session.user.id, email);
+      void refreshPendingInvites(session.user.id, email).catch((error) => console.error(error));
       void fetchProfileRole(session.user.id).then((role) => {
-        setAuthState((current) => current.session?.email === email
-          ? { ...current, session: { ...nextSession, role, title: roleTitles[role] } }
+        if (!role) return;
+        setAuthState((current) => current.session?.email.toLowerCase() === email.toLowerCase()
+          ? { ...current, session: { ...current.session, role, title: roleTitles[role] } }
           : current);
       });
     };
@@ -256,21 +337,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const email = user.email ?? "";
     const metadata = user.user_metadata ?? {};
     const name = typeof metadata.full_name === "string" ? metadata.full_name : typeof metadata.name === "string" ? metadata.name : email.split("@")[0];
-    const nextSession: AuthSession = {
-      email,
-      name,
-      role: "Staff",
-      title: roleTitles.Staff,
-      team: "StockTrack Store",
-    };
-    setAuthState((current) => ({
-      ...current,
-      session: nextSession,
-    }));
+    setAuthState((current) => {
+      const role = getKnownRole(current.session, email) ?? "Staff";
+      return {
+        ...current,
+        session: { email, name, role, title: roleTitles[role], team: "StockTrack Store" },
+      };
+    });
 
     const role = await fetchProfileRole(user.id);
-    setAuthState((current) => current.session?.email === email
-      ? { ...current, session: { ...nextSession, role, title: roleTitles[role] } }
+    if (!role) return;
+    setAuthState((current) => current.session?.email.toLowerCase() === email.toLowerCase()
+      ? { ...current, session: { ...current.session, role, title: roleTitles[role] } }
       : current);
   };
 
@@ -287,7 +365,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const profileName = typeof data.session.user.user_metadata?.name === "string" && data.session.user.user_metadata.name
           ? data.session.user.user_metadata.name
           : normalizedEmail.split("@")[0];
-        const role = await fetchProfileRole(data.session.user.id);
+        const role = (await fetchProfileRole(data.session.user.id)) ?? getKnownRole(authState.session, normalizedEmail) ?? "Staff";
         const nextSession: AuthSession = {
           email: normalizedEmail,
           name: profileName,
@@ -344,7 +422,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { success: true, message: "Account created. Check your email to confirm your account before signing in." };
     }
 
-    const role = await fetchProfileRole(data.user.id);
+    const role = (await fetchProfileRole(data.user.id)) ?? getKnownRole(authState.session, normalizedEmail) ?? "Staff";
     const nextSession: AuthSession = {
       email: normalizedEmail,
       name: trimmedName,
@@ -361,129 +439,169 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { success: false, message: "Google login needs the Supabase configuration in .env.local." };
     }
 
+    if (googleAuthInFlight.current) {
+      return { success: false, message: "Google sign-in is already in progress." };
+    }
+
     if (Platform.OS !== "web" && Constants.appOwnership === "expo") {
       return { success: false, message: "Google login needs a custom URL scheme that Expo Go can't handle. Install the built APK (or a dev client) to use Continue with Google." };
     }
 
-    const redirectUri = Platform.OS === "web"
-      ? `${window.location.origin}/auth/callback`
-      : makeRedirectUri({ native: "inventorymonitorapp://auth/callback" });
-    if (Platform.OS === "web") {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider,
-        options: { redirectTo: redirectUri },
-      });
-      return { success: !error, message: error?.message ?? "" };
-    }
+    googleAuthInFlight.current = true;
 
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: { redirectTo: redirectUri, skipBrowserRedirect: true },
-    });
+    try {
+      const redirectUri = Platform.OS === "web"
+        ? `${window.location.origin}/auth/callback`
+        : makeRedirectUri({ native: "inventorymonitorapp://auth/callback" });
+      if (Platform.OS === "web") {
+        const { data, error } = await supabase.auth.signInWithOAuth({
+          provider,
+          options: {
+            redirectTo: redirectUri,
+          },
+        });
 
-    if (error || !data.url) {
-      return { success: false, message: error?.message ?? "Google login could not be started." };
-    }
+        if (error) {
+          return { success: false, message: error.message };
+        }
 
-    const result = await Promise.race([
-      WebBrowser.openAuthSessionAsync(data.url, redirectUri),
-      new Promise<{ type: "cancel"; message?: string }>((resolve) => setTimeout(() => resolve({ type: "cancel", message: "Google login timed out. Check that the provider is enabled in Supabase." }), 15000)),
-    ]);
-    if (result.type !== "success" || !result.url) {
-      const timeoutMessage = "message" in result ? result.message : undefined;
-      return { success: false, message: timeoutMessage ?? "Google login was cancelled." };
-    }
+        if (data?.url) {
+          window.location.assign(data.url);
+          return { success: true, message: "Redirecting to Google sign-in…" };
+        }
 
-    const callbackUrl = new URL(result.url);
-    const providerError = callbackUrl.searchParams.get("error_description") ?? callbackUrl.searchParams.get("error");
-    if (providerError) {
-      return { success: false, message: providerError.replace(/\+/g, " ") };
-    }
-    const code = callbackUrl.searchParams.get("code");
-    const hash = new URLSearchParams(callbackUrl.hash.replace(/^#/, ""));
-    const codeFromHash = hash.get("code");
-    const accessToken = callbackUrl.searchParams.get("access_token") ?? hash.get("access_token");
-    const refreshToken = callbackUrl.searchParams.get("refresh_token") ?? hash.get("refresh_token");
-    const callbackCode = code ?? codeFromHash;
-    if (!callbackCode && accessToken && refreshToken) {
-      const tokenSession = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
-      if (tokenSession.error || !tokenSession.data.user) {
-        return { success: false, message: tokenSession.error?.message ?? "Google login could not create a session." };
+        return { success: true, message: "Opening Google sign-in…" };
       }
-      const user = tokenSession.data.user;
+
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: { redirectTo: redirectUri, skipBrowserRedirect: true },
+      });
+
+      if (error || !data.url) {
+        return { success: false, message: error?.message ?? "Google login could not be started." };
+      }
+
+      const result = await Promise.race([
+        WebBrowser.openAuthSessionAsync(data.url, redirectUri),
+        new Promise<{ type: "cancel"; message?: string }>((resolve) => setTimeout(() => resolve({ type: "cancel", message: "Google login timed out. Check that the provider is enabled in Supabase." }), 15000)),
+      ]);
+      if (result.type !== "success" || !result.url) {
+        const timeoutMessage = "message" in result ? result.message : undefined;
+        return { success: false, message: timeoutMessage ?? "Google login was cancelled." };
+      }
+
+      const callbackUrl = new URL(result.url);
+      const providerError = callbackUrl.searchParams.get("error_description") ?? callbackUrl.searchParams.get("error");
+      if (providerError) {
+        return { success: false, message: providerError.replace(/\+/g, " ") };
+      }
+      const code = callbackUrl.searchParams.get("code");
+      const hash = new URLSearchParams(callbackUrl.hash.replace(/^#/, ""));
+      const codeFromHash = hash.get("code");
+      const accessToken = callbackUrl.searchParams.get("access_token") ?? hash.get("access_token");
+      const refreshToken = callbackUrl.searchParams.get("refresh_token") ?? hash.get("refresh_token");
+      const callbackCode = code ?? codeFromHash;
+      if (!callbackCode && accessToken && refreshToken) {
+        const tokenSession = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+        if (tokenSession.error || !tokenSession.data.user) {
+          return { success: false, message: tokenSession.error?.message ?? "Google login could not create a session." };
+        }
+        const user = tokenSession.data.user;
+        const profileName = typeof user.user_metadata?.full_name === "string"
+          ? user.user_metadata.full_name
+          : typeof user.user_metadata?.name === "string"
+            ? user.user_metadata.name
+            : user.email?.split("@")[0] ?? "Google User";
+        const role = (await fetchProfileRole(user.id)) ?? getKnownRole(authState.session, user.email ?? "") ?? "Staff";
+        const nextSession: AuthSession = { email: user.email ?? "", name: profileName, role, title: roleTitles[role], team: "StockTrack Store" };
+        setAuthState((current) => ({ ...current, session: nextSession }));
+        return { success: true, message: `Signed in as ${profileName}.`, session: nextSession };
+      }
+      if (!callbackCode) {
+        const { data: currentSession } = await supabase.auth.getSession();
+        const authenticatedUser = currentSession.session?.user;
+        if (!authenticatedUser) {
+          const callbackShape = `query=${callbackUrl.search ? "present" : "empty"}, hash=${callbackUrl.hash ? "present" : "empty"}`;
+          return { success: false, message: `Google login returned without session data (${callbackShape}). Check the Supabase redirect allow list.` };
+        }
+
+        const profileName = typeof authenticatedUser.user_metadata?.full_name === "string"
+          ? authenticatedUser.user_metadata.full_name
+          : typeof authenticatedUser.user_metadata?.name === "string"
+            ? authenticatedUser.user_metadata.name
+            : authenticatedUser.email?.split("@")[0] ?? "Google User";
+        const knownRole = getKnownRole(authState.session, authenticatedUser.email ?? "") ?? "Staff";
+        const nextSession: AuthSession = {
+          email: authenticatedUser.email ?? "",
+          name: profileName,
+          role: knownRole,
+          title: roleTitles[knownRole],
+          team: "StockTrack Store",
+        };
+        setAuthState((current) => ({ ...current, session: nextSession }));
+        void fetchProfileRole(authenticatedUser.id).then((role) => {
+          if (!role) return;
+          setAuthState((current) => current.session?.email.toLowerCase() === nextSession.email.toLowerCase()
+            ? { ...current, session: { ...current.session, role, title: roleTitles[role] } }
+            : current);
+        });
+        return { success: true, message: `Signed in as ${profileName}.`, session: nextSession };
+      }
+
+      const exchange = await supabase.auth.exchangeCodeForSession(callbackCode);
+      if (exchange.error || !exchange.data.user) {
+        return { success: false, message: exchange.error?.message ?? "Google login could not be completed." };
+      }
+
+      const user = exchange.data.user;
       const profileName = typeof user.user_metadata?.full_name === "string"
         ? user.user_metadata.full_name
         : typeof user.user_metadata?.name === "string"
           ? user.user_metadata.name
           : user.email?.split("@")[0] ?? "Google User";
-      const role = await fetchProfileRole(user.id);
-      const nextSession: AuthSession = { email: user.email ?? "", name: profileName, role, title: roleTitles[role], team: "StockTrack Store" };
-      setAuthState((current) => ({ ...current, session: nextSession }));
-      return { success: true, message: `Signed in as ${profileName}.`, session: nextSession };
-    }
-    if (!callbackCode) {
-      const { data: currentSession } = await supabase.auth.getSession();
-      const authenticatedUser = currentSession.session?.user;
-      if (!authenticatedUser) {
-        const callbackShape = `query=${callbackUrl.search ? "present" : "empty"}, hash=${callbackUrl.hash ? "present" : "empty"}`;
-        return { success: false, message: `Google login returned without session data (${callbackShape}). Check the Supabase redirect allow list.` };
-      }
-
-      const profileName = typeof authenticatedUser.user_metadata?.full_name === "string"
-        ? authenticatedUser.user_metadata.full_name
-        : typeof authenticatedUser.user_metadata?.name === "string"
-          ? authenticatedUser.user_metadata.name
-          : authenticatedUser.email?.split("@")[0] ?? "Google User";
+      const knownRole = getKnownRole(authState.session, user.email ?? "") ?? "Staff";
       const nextSession: AuthSession = {
-        email: authenticatedUser.email ?? "",
+        email: user.email ?? "",
         name: profileName,
-        role: "Staff",
-        title: roleTitles.Staff,
+        role: knownRole,
+        title: roleTitles[knownRole],
         team: "StockTrack Store",
       };
       setAuthState((current) => ({ ...current, session: nextSession }));
-      void fetchProfileRole(authenticatedUser.id).then((role) => {
-        setAuthState((current) => current.session?.email === nextSession.email
-          ? { ...current, session: { ...nextSession, role, title: roleTitles[role] } }
+      void fetchProfileRole(user.id).then((role) => {
+        if (!role) return;
+        setAuthState((current) => current.session?.email.toLowerCase() === nextSession.email.toLowerCase()
+          ? { ...current, session: { ...current.session, role, title: roleTitles[role] } }
           : current);
       });
       return { success: true, message: `Signed in as ${profileName}.`, session: nextSession };
+    } finally {
+      googleAuthInFlight.current = false;
     }
-
-    const exchange = await supabase.auth.exchangeCodeForSession(callbackCode);
-    if (exchange.error || !exchange.data.user) {
-      return { success: false, message: exchange.error?.message ?? "Google login could not be completed." };
-    }
-
-    const user = exchange.data.user;
-    const profileName = typeof user.user_metadata?.full_name === "string"
-      ? user.user_metadata.full_name
-      : typeof user.user_metadata?.name === "string"
-        ? user.user_metadata.name
-        : user.email?.split("@")[0] ?? "Google User";
-    const nextSession: AuthSession = {
-      email: user.email ?? "",
-      name: profileName,
-      role: "Staff",
-      title: roleTitles.Staff,
-      team: "StockTrack Store",
-    };
-    setAuthState((current) => ({ ...current, session: nextSession }));
-    void fetchProfileRole(user.id).then((role) => {
-      setAuthState((current) => current.session?.email === nextSession.email
-        ? { ...current, session: { ...nextSession, role, title: roleTitles[role] } }
-        : current);
-    });
-    return { success: true, message: `Signed in as ${profileName}.`, session: nextSession };
   };
 
   const signInWithGoogle = () => signInWithProvider("google");
 
-  const signOut = () => {
+  const signOut = async (): Promise<AuthResult> => {
+    const cacheScope = getOfflineCacheScope();
     if (supabase) {
-      void supabase.auth.signOut();
+      try {
+        const syncResult = await processSyncQueue();
+        if (syncResult.remainingCount > 0) {
+          return { success: false, message: "Some changes are still waiting to sync. Connect to the internet and sync before signing out, or clear the pending queue if you want to discard those changes." };
+        }
+        const { error } = await supabase.auth.signOut();
+        if (error) {
+          return { success: false, message: error.message };
+        }
+        await clearOfflineCache(cacheScope);
+      } catch (error) {
+        return { success: false, message: error instanceof Error ? error.message : "Could not safely sign out." };
+      }
     }
     setAuthState((current) => ({ ...current, session: null }));
+    return { success: true, message: "Signed out successfully." };
   };
 
   const changePassword = async (currentPassword: string, newPassword: string): Promise<AuthResult> => {
@@ -518,10 +636,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { success: false, message: "Password recovery needs the Supabase configuration in .env.local." };
     }
 
-    const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail);
+    const redirectTo = Platform.OS === "web"
+      ? `${window.location.origin}/auth/callback`
+      : makeRedirectUri({ native: "inventorymonitorapp://auth/callback" });
+    const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, { redirectTo });
     return error
       ? { success: false, message: error.message }
       : { success: true, message: "Password recovery instructions were sent if the account exists." };
+  };
+
+  const resetPassword = async (newPassword: string): Promise<AuthResult> => {
+    if (!supabase) {
+      return { success: false, message: "Password recovery needs the Supabase configuration in .env.local." };
+    }
+
+    if (newPassword.length < 8 || !/[A-Za-z]/.test(newPassword) || !/\d/.test(newPassword)) {
+      return { success: false, message: "New password must be at least 8 characters and include a letter and a number." };
+    }
+
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    return error
+      ? { success: false, message: error.message }
+      : { success: true, message: "Password updated successfully." };
   };
 
   const addEmployee = async (employee: Omit<Employee, "id" | "createdAt" | "status">): Promise<EmployeeResult> => {
@@ -532,7 +668,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     if (supabase) {
-      if (remoteEmployees?.some((item) => item.email.toLowerCase() === emailNormalized)) {
+      if (currentRemoteEmployees?.some((item) => item.email.toLowerCase() === emailNormalized)) {
         return { success: false, message: "An employee with this email already exists." };
       }
 
@@ -541,9 +677,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { success: false, message: `Could not create the invite: ${inviteError}` };
       }
 
+      let emailError: string | null = null;
+      try {
+        const { error } = await supabase.functions.invoke("send-team-invite", {
+          body: { email: emailNormalized, role: employee.role },
+        });
+        emailError = error?.message ?? null;
+      } catch (error) {
+        emailError = error instanceof Error ? error.message : String(error);
+      }
+      if (emailError) {
+        await refreshPendingInvites().catch((error) => console.error(error));
+        return { success: false, message: `Invite saved, but the email could not be sent: ${emailError}` };
+      }
+      try {
+        await refreshPendingInvites();
+      } catch (error) {
+        return {
+          success: false,
+          message: `Invitation email was sent, but the pending list could not be refreshed: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+
       return {
         success: true,
-        message: `Invite saved for ${emailNormalized}. No email was sent; they must sign up with this email to join as ${employee.role}.`,
+        message: `Invitation email sent to ${emailNormalized}.`,
       };
     }
 
@@ -572,7 +730,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const updateEmployee = async (employeeId: string, patch: Partial<Omit<Employee, "id" | "createdAt">>): Promise<EmployeeResult> => {
     if (supabase) {
-      const existing = remoteEmployees?.find((employee) => employee.id === employeeId);
+      const existing = currentRemoteEmployees?.find((employee) => employee.id === employeeId);
 
       if (!existing) {
         return { success: false, message: "Employee not found." };
@@ -643,7 +801,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const removeEmployee = async (employeeId: string): Promise<EmployeeResult> => {
     if (supabase) {
-      const existing = remoteEmployees?.find((employee) => employee.id === employeeId);
+      const existing = currentRemoteEmployees?.find((employee) => employee.id === employeeId);
 
       if (!existing) {
         return { success: false, message: "Employee not found." };
@@ -686,6 +844,63 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   };
 
+  const resendInvite = async (email: string): Promise<EmployeeResult> => {
+    if (!supabase) {
+      return { success: false, message: "Sending invitation emails requires Supabase configuration." };
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    try {
+      const { error } = await supabase.functions.invoke("send-team-invite", {
+        body: { email: normalizedEmail },
+      });
+      if (error) {
+        return { success: false, message: `Could not resend the invitation: ${error.message}` };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        message: `Could not resend the invitation: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+
+    return { success: true, message: `Invitation email resent to ${normalizedEmail}.` };
+  };
+
+  const revokeInvite = async (inviteId: string): Promise<EmployeeResult> => {
+    if (!supabase) {
+      return { success: false, message: "Revoking invitations requires Supabase configuration." };
+    }
+
+    try {
+      const { error } = await supabase
+        .from("invites")
+        .delete()
+        .eq("id", inviteId);
+      if (error) {
+        return { success: false, message: `Could not revoke the invitation: ${error.message}` };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        message: `Could not revoke the invitation: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+
+    setRemotePendingInvites((current) => current
+      ? { ...current, invites: current.invites.filter((invite) => invite.id !== inviteId) }
+      : current);
+    try {
+      await refreshPendingInvites();
+    } catch (error) {
+      return {
+        success: true,
+        message: `Invitation revoked, but the list could not be refreshed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    return { success: true, message: "Invitation revoked." };
+  };
+
   const getAllowedRoutes = (role?: UserRole) => {
     if (!role) {
       return [];
@@ -718,16 +933,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         session: authState.session,
         isReady,
-        employees: supabase && remoteEmployees ? remoteEmployees : authState.employees,
+        employees: supabase ? currentRemoteEmployees ?? [] : authState.employees,
+        pendingInvites: remotePendingInvites && remotePendingInvites.email === authState.session?.email.toLowerCase()
+          ? remotePendingInvites.invites
+          : [],
         signIn,
         signUp,
         signInWithGoogle,
         signOut,
         recoverPassword,
+        resetPassword,
         changePassword,
         addEmployee,
         updateEmployee,
         removeEmployee,
+        refreshPendingInvites: () => refreshPendingInvites(),
+        resendInvite,
+        revokeInvite,
         getHomeRoute,
         getAllowedRoutes,
         hasRouteAccess,
@@ -748,4 +970,3 @@ export function useAuth() {
 
   return context;
 }
-

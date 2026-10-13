@@ -1,15 +1,12 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Print from "expo-print";
-import { useRouter } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
 import * as Sharing from "expo-sharing";
 import { useMemo, useState } from "react";
 import {
     Alert,
     FlatList,
-    KeyboardAvoidingView,
     Linking,
-    Modal,
-    Platform,
     ScrollView,
     Share,
     StyleSheet,
@@ -27,23 +24,41 @@ import {
     useTheme
 } from "react-native-paper";
 
+import { CreditCustomerModal } from "../components/credit/CreditCustomerModal";
+import { CreditPaymentModal } from "../components/credit/CreditPaymentModal";
+import { CreditRecordModal } from "../components/credit/CreditRecordModal";
 import { useAuth } from "../context/auth";
 import { useStore } from "../context/store";
 import {
     getCurrency,
     type Customer,
     type CustomerRiskStatus,
-    type Debt
+    type Debt,
+    type DebtPayment,
 } from "../data/freshmart";
+import { useBreakpoint } from "../hooks/useBreakpoint";
 import { translate } from "../lib/i18n";
 
-type FilterTab = "all" | "unpaid" | "overdue" | "settled" | "customers";
+type FilterTab = "all" | "unpaid" | "overdue" | "settled" | "customers" | "ledger";
+type LedgerEntry = {
+  id: string;
+  kind: "credit" | "payment";
+  customerName: string;
+  createdAt: string;
+  amount: number;
+  description?: string;
+  paymentMethod?: DebtPayment["paymentMethod"];
+  referenceNumber?: string;
+  recordedBy?: string;
+};
 
 export default function UtangScreen() {
   const router = useRouter();
   const theme = useTheme();
-  const { session } = useAuth();
-  const { state, debts, customers, addCustomer, updateCustomer, addDebt, recordDebtPayment } = useStore();
+  const breakpoint = useBreakpoint();
+  const isDesktop = breakpoint !== "mobile";
+  const { session, isReady } = useAuth();
+  const { state, debts, debtPayments, customers, addCustomer, updateCustomer, addDebt, recordDebtPayment } = useStore();
   const language = state.user.preferences?.language ?? "English";
 
   const [activeTab, setActiveTab] = useState<FilterTab>("unpaid");
@@ -52,31 +67,13 @@ export default function UtangScreen() {
   // Payment Recording Modal State
   const [paymentModalVisible, setPaymentModalVisible] = useState(false);
   const [selectedDebt, setSelectedDebt] = useState<Debt | null>(null);
-  const [paymentAmountStr, setPaymentAmountStr] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<"cash" | "gcash" | "maya">("cash");
-  const [paymentRefNumber, setPaymentRefNumber] = useState("");
-  const [paymentNote, setPaymentNote] = useState("");
-  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
 
   // New Credit / Utang Modal State
   const [newUtangModalVisible, setNewUtangModalVisible] = useState(false);
-  const [selectedCustomerId, setSelectedCustomerId] = useState("");
-  const [newCustomerName, setNewCustomerName] = useState("");
-  const [newCustomerPhone, setNewCustomerPhone] = useState("");
-  const [newCustomerCreditLimit, setNewCustomerCreditLimit] = useState("1000");
-  const [newUtangAmountStr, setNewUtangAmountStr] = useState("");
-  const [newUtangDueDate, setNewUtangDueDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 15);
-    return d.toISOString().split("T")[0];
-  });
-  const [newUtangNote, setNewUtangNote] = useState("");
 
   // Customer Management / Edit Modal State
   const [customerModalVisible, setCustomerModalVisible] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [editLimitStr, setEditLimitStr] = useState("");
-  const [editRiskStatus, setEditRiskStatus] = useState<CustomerRiskStatus>("good");
 
   // KPI calculations
   const totalReceivables = useMemo(() => {
@@ -127,52 +124,43 @@ export default function UtangScreen() {
     });
   }, [customers, searchQuery]);
 
+  const ledgerEntries = useMemo(() => {
+    const entries: LedgerEntry[] = [
+      ...debts.map((debt) => ({
+        id: `credit-${debt.id}`,
+        kind: "credit" as const,
+        customerName: debt.customerName,
+        createdAt: debt.createdAt,
+        amount: debt.amount,
+        description: debt.itemsSummary || debt.note,
+      })),
+      ...debtPayments.map((payment) => {
+        const debt = debts.find((item) => item.id === payment.debtId);
+        const customer = customers.find((item) => item.id === payment.customerId);
+        return {
+          id: `payment-${payment.id}`,
+          kind: "payment" as const,
+          customerName: debt?.customerName ?? customer?.name ?? translate(language, "unknownCustomer"),
+          createdAt: payment.createdAt,
+          amount: payment.amount,
+          description: payment.note,
+          paymentMethod: payment.paymentMethod,
+          referenceNumber: payment.referenceNumber,
+          recordedBy: payment.recordedBy,
+        };
+      }),
+    ];
+    const query = searchQuery.trim().toLowerCase();
+    return entries
+      .filter((entry) => !query || [entry.customerName, entry.description, entry.paymentMethod, entry.referenceNumber, entry.recordedBy]
+        .some((value) => value?.toLowerCase().includes(query)))
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+  }, [debts, debtPayments, customers, searchQuery, language]);
+
   // Open Payment modal
   const handleOpenPayment = (debt: Debt) => {
     setSelectedDebt(debt);
-    setPaymentAmountStr(String(debt.balance));
-    setPaymentMethod("cash");
-    setPaymentRefNumber("");
-    setPaymentNote("");
     setPaymentModalVisible(true);
-  };
-
-  // Submit payment
-  const handleSubmitPayment = async () => {
-    if (!selectedDebt) return;
-    const amount = Number(paymentAmountStr);
-    if (!amount || amount <= 0) {
-      Alert.alert(translate(language, "warningLabel") || "Warning", "Please enter a valid payment amount.");
-      return;
-    }
-    if (amount > selectedDebt.balance) {
-      Alert.alert(translate(language, "warningLabel") || "Warning", "Payment amount cannot exceed balance due.");
-      return;
-    }
-
-    setIsProcessingPayment(true);
-    try {
-      const success = await recordDebtPayment({
-        debtId: selectedDebt.id,
-        customerId: selectedDebt.customerId,
-        amount,
-        paymentMethod,
-        referenceNumber: paymentRefNumber.trim() || undefined,
-        note: paymentNote.trim() || undefined,
-      });
-
-      if (success) {
-        setPaymentModalVisible(false);
-        Alert.alert(
-          translate(language, "paymentSuccess") || "Payment Recorded",
-          `Recorded ₱${amount.toFixed(2)} payment for ${selectedDebt.customerName}. Remaining: ₱${Math.max(0, selectedDebt.balance - amount).toFixed(2)}`
-        );
-      }
-    } catch (err: any) {
-      Alert.alert("Error", err?.message ?? "Failed to record payment.");
-    } finally {
-      setIsProcessingPayment(false);
-    }
   };
 
   // Send friendly reminder via SMS or Share
@@ -203,109 +191,14 @@ export default function UtangScreen() {
     });
   };
 
-  // Create new utang/credit record
-  const handleCreateUtang = async () => {
-    const amount = Number(newUtangAmountStr);
-    if (!amount || amount <= 0) {
-      Alert.alert("Validation", "Please enter a valid utang amount.");
-      return;
-    }
-
-    let customerId = selectedCustomerId;
-    let customerName = "";
-    let customerPhone = "";
-
-    if (!customerId) {
-      if (!newCustomerName.trim()) {
-        Alert.alert("Validation", "Please select an existing customer or enter a customer name.");
-        return;
-      }
-      const created = await addCustomer({
-        name: newCustomerName.trim(),
-        phone: newCustomerPhone.trim() || "N/A",
-        creditLimit: Number(newCustomerCreditLimit) || 1000,
-        riskStatus: "good",
-      });
-      customerId = created.id;
-      customerName = created.name;
-      customerPhone = created.phone;
-    } else {
-      const existing = customers.find((c) => c.id === customerId);
-      if (existing) {
-        customerName = existing.name;
-        customerPhone = existing.phone;
-        // Credit limit check
-        if (existing.totalDebt + amount > existing.creditLimit) {
-          const proceed = await new Promise<boolean>((resolve) => {
-            Alert.alert(
-              "Credit Limit Exceeded",
-              `${existing.name}'s credit limit is ${getCurrency(existing.creditLimit)}. Current debt is ${getCurrency(existing.totalDebt)}. Adding ${getCurrency(amount)} will exceed the limit. Proceed anyway?`,
-              [
-                { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-                { text: "Proceed", style: "destructive", onPress: () => resolve(true) },
-              ]
-            );
-          });
-          if (!proceed) return;
-        }
-
-        if (existing.riskStatus === "blacklisted") {
-          const proceed = await new Promise<boolean>((resolve) => {
-            Alert.alert(
-              "Blacklisted Customer",
-              `${existing.name} is blacklisted for credit purchases. Proceed anyway?`,
-              [
-                { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-                { text: "Override & Proceed", style: "destructive", onPress: () => resolve(true) },
-              ]
-            );
-          });
-          if (!proceed) return;
-        }
-      }
-    }
-
-    await addDebt({
-      customerId,
-      customerName,
-      customerPhone,
-      amount,
-      dueDate: newUtangDueDate || undefined,
-      note: newUtangNote.trim() || undefined,
-      itemsSummary: newUtangNote.trim() || "Manual Utang Entry",
-    });
-
-    setNewUtangModalVisible(false);
-    setSelectedCustomerId("");
-    setNewCustomerName("");
-    setNewCustomerPhone("");
-    setNewUtangAmountStr("");
-    setNewUtangNote("");
-    Alert.alert("Success", `Recorded utang of ${getCurrency(amount)} for ${customerName}.`);
-  };
-
   // Open customer edit
   const handleOpenCustomerEdit = (cust: Customer) => {
     if (session?.role === "Staff") {
-      Alert.alert("Permission Denied", "Staff members cannot edit customer credit limits or credit standings. Only Store Owner or Manager can perform this action.");
+      Alert.alert(translate(language, "permissionDeniedTitle"), translate(language, "staffEditLimitDenied"));
       return;
     }
     setSelectedCustomer(cust);
-    setEditLimitStr(String(cust.creditLimit));
-    setEditRiskStatus(cust.riskStatus);
     setCustomerModalVisible(true);
-  };
-
-  // Save customer edits
-  const handleSaveCustomer = async () => {
-    if (!selectedCustomer) return;
-    const limit = Number(editLimitStr) || 1000;
-    await updateCustomer(selectedCustomer.id, {
-      creditLimit: limit,
-      riskStatus: editRiskStatus,
-    });
-    setCustomerModalVisible(false);
-    Alert.alert("Updated", `Customer ${selectedCustomer.name} profile updated.`);
   };
 
   // Export ledger to PDF
@@ -342,7 +235,7 @@ export default function UtangScreen() {
         <body>
           <div class="header">
             <h2>${storeName}</h2>
-            <h3>Customer Credit (Utang) Ledger Report</h3>
+            <h3>Customer Credit Ledger Report</h3>
             <p>Generated: ${dateStr}</p>
           </div>
           <table>
@@ -350,7 +243,7 @@ export default function UtangScreen() {
               <tr>
                 <th>Customer</th>
                 <th>Phone</th>
-                <th style="text-align: right;">Total Utang</th>
+                <th style="text-align: right;">Credit Issued</th>
                 <th style="text-align: right;">Balance</th>
                 <th style="text-align: center;">Status</th>
                 <th>Due Date</th>
@@ -370,7 +263,7 @@ export default function UtangScreen() {
 
     try {
       const { uri } = await Print.printToFileAsync({ html });
-      await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: "Share Utang Ledger" });
+      await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: "Share Credit Ledger" });
     } catch {
       Alert.alert("Export Error", "Failed to generate printable PDF ledger.");
     }
@@ -379,21 +272,37 @@ export default function UtangScreen() {
   const getRiskChip = (status: CustomerRiskStatus) => {
     switch (status) {
       case "good":
-        return { label: "Good Standing", bg: "#DCFCE7", text: "#166534" };
+        return { label: translate(language, "standingGood"), bg: "#DCFCE7", text: "#166534" };
       case "warning":
-        return { label: "Warning", bg: "#FEF3C7", text: "#92400E" };
+        return { label: translate(language, "statusWarning"), bg: "#FEF3C7", text: "#92400E" };
       case "blacklisted":
-        return { label: "Blacklisted", bg: "#FEE2E2", text: "#991B1B" };
+        return { label: translate(language, "statusBlacklisted"), bg: "#FEE2E2", text: "#991B1B" };
     }
   };
+
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace("/(tabs)");
+  };
+
+  if (!isReady) {
+    return null;
+  }
+
+  if (!session) {
+    return <Redirect href="/login" />;
+  }
 
   return (
     <View style={styles.container}>
       {/* Appbar */}
       <Appbar.Header elevated style={{ backgroundColor: theme.colors.surface }}>
-        <Appbar.BackAction onPress={() => router.back()} />
+        <Appbar.BackAction onPress={handleBack} />
         <Appbar.Content
-          title={translate(language, "utangTitle") || "Utang Tracker"}
+          title={translate(language, "utangTitle") || "Credit Tracker"}
           subtitle={translate(language, "utangSubtitle") || "Customer Credit & Receivables"}
           titleStyle={{ fontWeight: "700" }}
         />
@@ -404,15 +313,15 @@ export default function UtangScreen() {
       {/* KPI Cards */}
       <View style={styles.kpiContainer}>
         <Surface style={[styles.kpiCard, { backgroundColor: "#EEF2FF" }]} elevation={1}>
-          <Text style={styles.kpiLabel}>Collectible Receivables</Text>
+          <Text style={styles.kpiLabel}>{translate(language, "collectibleReceivables")}</Text>
           <Text style={[styles.kpiValue, { color: "#2563EB" }]}>{getCurrency(totalReceivables)}</Text>
         </Surface>
         <Surface style={[styles.kpiCard, { backgroundColor: "#FEF2F2" }]} elevation={1}>
-          <Text style={styles.kpiLabel}>Overdue</Text>
+          <Text style={styles.kpiLabel}>{translate(language, "overdueTab")}</Text>
           <Text style={[styles.kpiValue, { color: "#DC2626" }]}>{overdueCount}</Text>
         </Surface>
         <Surface style={[styles.kpiCard, { backgroundColor: "#F0FDF4" }]} elevation={1}>
-          <Text style={styles.kpiLabel}>Settled</Text>
+          <Text style={styles.kpiLabel}>{translate(language, "settledTab")}</Text>
           <Text style={[styles.kpiValue, { color: "#16A34A" }]}>{settledCount}</Text>
         </Surface>
       </View>
@@ -421,7 +330,7 @@ export default function UtangScreen() {
       <View style={styles.searchSection}>
         <TextInput
           style={[styles.searchInput, { backgroundColor: theme.colors.surface }]}
-          placeholder="Search customer name, phone, or items..."
+          placeholder={translate(language, "searchUtangPlaceholder")}
           placeholderTextColor="#94A3B8"
           value={searchQuery}
           onChangeText={setSearchQuery}
@@ -439,7 +348,7 @@ export default function UtangScreen() {
           style={[styles.tabChip, activeTab === "unpaid" && { backgroundColor: theme.colors.primary }]}
           textStyle={{ color: activeTab === "unpaid" ? "#FFF" : theme.colors.onSurface }}
         >
-          Unpaid ({unpaidCount})
+          {translate(language, "unpaidTab")} ({unpaidCount})
         </Chip>
         <Chip
           selected={activeTab === "overdue"}
@@ -447,7 +356,7 @@ export default function UtangScreen() {
           style={[styles.tabChip, activeTab === "overdue" && { backgroundColor: "#DC2626" }]}
           textStyle={{ color: activeTab === "overdue" ? "#FFF" : theme.colors.onSurface }}
         >
-          Overdue ({overdueCount})
+          {translate(language, "overdueTab")} ({overdueCount})
         </Chip>
         <Chip
           selected={activeTab === "settled"}
@@ -455,7 +364,7 @@ export default function UtangScreen() {
           style={[styles.tabChip, activeTab === "settled" && { backgroundColor: "#16A34A" }]}
           textStyle={{ color: activeTab === "settled" ? "#FFF" : theme.colors.onSurface }}
         >
-          Settled ({settledCount})
+          {translate(language, "settledTab")} ({settledCount})
         </Chip>
         <Chip
           selected={activeTab === "all"}
@@ -463,7 +372,15 @@ export default function UtangScreen() {
           style={[styles.tabChip, activeTab === "all" && { backgroundColor: theme.colors.primary }]}
           textStyle={{ color: activeTab === "all" ? "#FFF" : theme.colors.onSurface }}
         >
-          All Records ({debts.length})
+          {translate(language, "allRecordsTab")} ({debts.length})
+        </Chip>
+        <Chip
+          selected={activeTab === "ledger"}
+          onPress={() => setActiveTab("ledger")}
+          style={[styles.tabChip, activeTab === "ledger" && { backgroundColor: theme.colors.primary }]}
+          textStyle={{ color: activeTab === "ledger" ? "#FFF" : theme.colors.onSurface }}
+        >
+          {translate(language, "creditLedgerTab")} ({ledgerEntries.length})
         </Chip>
         <Chip
           selected={activeTab === "customers"}
@@ -471,7 +388,7 @@ export default function UtangScreen() {
           style={[styles.tabChip, activeTab === "customers" && { backgroundColor: theme.colors.primary }]}
           textStyle={{ color: activeTab === "customers" ? "#FFF" : theme.colors.onSurface }}
         >
-          Customers ({customers.length})
+          {translate(language, "customersTab")} ({customers.length})
         </Chip>
       </ScrollView>
 
@@ -479,7 +396,11 @@ export default function UtangScreen() {
       {activeTab === "customers" ? (
         <FlatList
           data={filteredCustomers}
+          style={styles.list}
           keyExtractor={(item) => item.id}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
           contentContainerStyle={styles.listContent}
           renderItem={({ item }) => {
             const risk = getRiskChip(item.riskStatus);
@@ -488,7 +409,7 @@ export default function UtangScreen() {
                 <View style={styles.cardHeader}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.customerTitle}>{item.name}</Text>
-                    <Text style={styles.customerPhone}>📞 {item.phone || "No phone"}</Text>
+                    <Text style={styles.customerPhone}>📞 {item.phone || translate(language, "notProvided")}</Text>
                   </View>
                   <View style={[styles.riskBadge, { backgroundColor: risk.bg }]}>
                     <Text style={[styles.riskText, { color: risk.text }]}>{risk.label}</Text>
@@ -497,23 +418,23 @@ export default function UtangScreen() {
                 <Divider style={{ marginVertical: 8 }} />
                 <View style={styles.customerStatsRow}>
                   <View style={styles.customerStatCol}>
-                    <Text style={styles.statLabel}>Current Debt</Text>
+                    <Text style={styles.statLabel}>{translate(language, "currentDebtLabel")}</Text>
                     <Text style={[styles.statValue, { color: item.totalDebt > 0 ? "#DC2626" : "#16A34A" }]}>
                       {getCurrency(item.totalDebt)}
                     </Text>
                   </View>
                   <View style={styles.customerStatCol}>
-                    <Text style={styles.statLabel}>Credit Limit</Text>
+                    <Text style={styles.statLabel}>{translate(language, "creditLimitLabel")}</Text>
                     <Text style={styles.statValue}>{getCurrency(item.creditLimit)}</Text>
                   </View>
                   <View style={styles.customerStatCol}>
-                    <Text style={styles.statLabel}>Loyalty Pts</Text>
+                    <Text style={styles.statLabel}>{translate(language, "loyaltyPoints") || "Loyalty Pts"}</Text>
                     <Text style={[styles.statValue, { color: "#7C3AED" }]}>⭐ {item.loyaltyPoints}</Text>
                   </View>
                 </View>
                 <View style={styles.cardActionRow}>
                   <Button mode="outlined" compact icon="account-edit-outline" onPress={() => handleOpenCustomerEdit(item)}>
-                    Edit Standing
+                    {translate(language, "editStanding")}
                   </Button>
                 </View>
               </Surface>
@@ -522,14 +443,60 @@ export default function UtangScreen() {
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <MaterialCommunityIcons name="account-group-outline" size={48} color="#94A3B8" />
-              <Text style={styles.emptyText}>No customers found.</Text>
+              <Text style={styles.emptyText}>{translate(language, "noCustomersFound")}</Text>
+            </View>
+          }
+        />
+      ) : activeTab === "ledger" ? (
+        <FlatList
+          data={ledgerEntries}
+          style={styles.list}
+          keyExtractor={(item) => item.id}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={5}
+          contentContainerStyle={styles.listContent}
+          renderItem={({ item }) => {
+            const isPayment = item.kind === "payment";
+            return (
+              <Surface style={styles.card} elevation={1}>
+                <View style={styles.ledgerHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.customerTitle}>{item.customerName}</Text>
+                    <Text style={styles.customerPhone}>
+                      {translate(language, isPayment ? "ledgerPaymentLabel" : "ledgerCreditLabel")} · {new Date(item.createdAt).toLocaleString()}
+                    </Text>
+                  </View>
+                  <Text style={[styles.ledgerAmount, { color: isPayment ? "#15803D" : "#B91C1C" }]}>
+                    {isPayment ? "-" : "+"}{getCurrency(item.amount)}
+                  </Text>
+                </View>
+                {item.description ? <Text style={styles.itemsSummaryText}>{item.description}</Text> : null}
+                {isPayment ? (
+                  <Text style={styles.customerPhone}>
+                    {translate(language, "paymentMethodLabel")}: {item.paymentMethod?.toUpperCase()}
+                    {item.referenceNumber ? ` · ${translate(language, "paymentReference")}: ${item.referenceNumber}` : ""}
+                    {item.recordedBy ? ` · ${item.recordedBy}` : ""}
+                  </Text>
+                ) : null}
+              </Surface>
+            );
+          }}
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <MaterialCommunityIcons name="book-open-page-variant-outline" size={48} color="#94A3B8" />
+              <Text style={styles.emptyText}>{translate(language, "creditLedgerEmpty")}</Text>
             </View>
           }
         />
       ) : (
         <FlatList
           data={filteredDebts}
+          style={styles.list}
           keyExtractor={(item) => item.id}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
           contentContainerStyle={styles.listContent}
           renderItem={({ item }) => {
             const isOverdue = item.status !== "paid" && item.dueDate && item.dueDate < todayStr;
@@ -539,7 +506,7 @@ export default function UtangScreen() {
                   <View style={{ flex: 1 }}>
                     <Text style={styles.customerTitle}>{item.customerName}</Text>
                     <Text style={styles.customerPhone}>
-                      📞 {item.customerPhone || "No contact"} · {new Date(item.createdAt).toLocaleDateString()}
+                      📞 {item.customerPhone || translate(language, "notProvided")} · {new Date(item.createdAt).toLocaleDateString()}
                     </Text>
                   </View>
                   <View
@@ -560,7 +527,7 @@ export default function UtangScreen() {
                         },
                       ]}
                     >
-                      {item.status === "paid" ? "PAID" : isOverdue ? "OVERDUE" : "UNPAID"}
+                      {item.status === "paid" ? translate(language, "statusPaid") : isOverdue ? translate(language, "statusOverdue") : translate(language, "statusUnpaid")}
                     </Text>
                   </View>
                 </View>
@@ -575,16 +542,16 @@ export default function UtangScreen() {
 
                 <View style={styles.amountBreakdown}>
                   <View>
-                    <Text style={styles.balanceLabel}>Balance Due</Text>
+                    <Text style={styles.balanceLabel}>{translate(language, "balanceDueLabel")}</Text>
                     <Text style={[styles.balanceValue, { color: item.balance > 0 ? "#DC2626" : "#16A34A" }]}>
                       {getCurrency(item.balance)}
                     </Text>
                   </View>
                   <View style={{ alignItems: "flex-end" }}>
-                    <Text style={styles.statLabel}>Original Utang: {getCurrency(item.amount)}</Text>
+                    <Text style={styles.statLabel}>{translate(language, "originalLabel")}: {getCurrency(item.amount)}</Text>
                     {item.dueDate ? (
                       <Text style={[styles.dueDateText, isOverdue && { color: "#DC2626", fontWeight: "700" }]}>
-                        Due: {item.dueDate}
+                        {translate(language, "dueDateLabel")}: {item.dueDate}
                       </Text>
                     ) : null}
                   </View>
@@ -598,7 +565,7 @@ export default function UtangScreen() {
                     onPress={() => handleSendReminder(item)}
                     style={{ marginRight: 8 }}
                   >
-                    Paalala (SMS)
+                    {translate(language, "smsReminder")}
                   </Button>
                   {item.status !== "paid" ? (
                     <Button
@@ -607,7 +574,7 @@ export default function UtangScreen() {
                       icon="cash-multiple"
                       onPress={() => handleOpenPayment(item)}
                     >
-                      Magbayad
+                      {translate(language, "payButton")}
                     </Button>
                   ) : null}
                 </View>
@@ -617,289 +584,54 @@ export default function UtangScreen() {
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <MaterialCommunityIcons name="book-open-page-variant-outline" size={48} color="#94A3B8" />
-              <Text style={styles.emptyText}>No debts found in this view.</Text>
+              <Text style={styles.emptyText}>{translate(language, "noDebtsInView")}</Text>
             </View>
           }
         />
       )}
 
-      {/* Record Payment Modal ("Magbayad ng Utang") */}
-      <Modal visible={paymentModalVisible} transparent animationType="slide">
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalBackdrop}>
-          <View style={[styles.modalContent, { backgroundColor: theme.colors.surface }]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Magbayad ng Utang</Text>
-              <IconButton icon="close" size={20} onPress={() => setPaymentModalVisible(false)} />
-            </View>
+      {/* Record Payment Modal */}
+      <CreditPaymentModal
+        key={paymentModalVisible && selectedDebt ? `open:${selectedDebt.id}` : "closed"}
+        visible={paymentModalVisible}
+        debt={selectedDebt}
+        isDesktop={isDesktop}
+        language={language}
+        onClose={() => setPaymentModalVisible(false)}
+        onSubmit={recordDebtPayment}
+        getCurrency={getCurrency}
+      />
 
-            {selectedDebt ? (
-              <ScrollView>
-                <Surface style={styles.debtSummaryBanner} elevation={0}>
-                  <Text style={{ fontWeight: "700", fontSize: 16 }}>{selectedDebt.customerName}</Text>
-                  <Text style={{ color: "#64748B", marginVertical: 2 }}>
-                    Original: {getCurrency(selectedDebt.amount)} · Paid: {getCurrency(selectedDebt.amountPaid)}
-                  </Text>
-                  <Text style={{ fontWeight: "800", color: "#DC2626", fontSize: 18 }}>
-                    Balance: {getCurrency(selectedDebt.balance)}
-                  </Text>
-                </Surface>
-
-                <Text style={styles.inputLabel}>Halaga ng Bayad (₱)</Text>
-                <TextInput
-                  style={styles.modalTextInput}
-                  keyboardType="decimal-pad"
-                  value={paymentAmountStr}
-                  onChangeText={setPaymentAmountStr}
-                  placeholder="0.00"
-                />
-
-                <View style={styles.quickChipsRow}>
-                  <Chip compact onPress={() => setPaymentAmountStr(String(selectedDebt.balance))}>
-                    Full Balance ({getCurrency(selectedDebt.balance)})
-                  </Chip>
-                  {selectedDebt.balance > 100 && (
-                    <Chip compact onPress={() => setPaymentAmountStr(String(Math.floor(selectedDebt.balance / 2)))}>
-                      Half ({getCurrency(Math.floor(selectedDebt.balance / 2))})
-                    </Chip>
-                  )}
-                </View>
-
-                <Text style={styles.inputLabel}>Paraan ng Pagbayad</Text>
-                <View style={styles.paymentMethodRow}>
-                  <Chip
-                    selected={paymentMethod === "cash"}
-                    onPress={() => setPaymentMethod("cash")}
-                    style={[styles.methodChip, paymentMethod === "cash" && styles.selectedMethod]}
-                  >
-                    💵 Cash
-                  </Chip>
-                  <Chip
-                    selected={paymentMethod === "gcash"}
-                    onPress={() => setPaymentMethod("gcash")}
-                    style={[styles.methodChip, paymentMethod === "gcash" && styles.selectedMethod]}
-                  >
-                    💙 GCash
-                  </Chip>
-                  <Chip
-                    selected={paymentMethod === "maya"}
-                    onPress={() => setPaymentMethod("maya")}
-                    style={[styles.methodChip, paymentMethod === "maya" && styles.selectedMethod]}
-                  >
-                    💚 Maya
-                  </Chip>
-                </View>
-
-                {paymentMethod !== "cash" && (
-                  <>
-                    <Text style={styles.inputLabel}>Reference Number / Ref No.</Text>
-                    <TextInput
-                      style={styles.modalTextInput}
-                      placeholder="e.g. 100293847583"
-                      value={paymentRefNumber}
-                      onChangeText={setPaymentRefNumber}
-                    />
-                  </>
-                )}
-
-                <Text style={styles.inputLabel}>Note (Opsyonal)</Text>
-                <TextInput
-                  style={styles.modalTextInput}
-                  placeholder="Additional remarks..."
-                  value={paymentNote}
-                  onChangeText={setPaymentNote}
-                />
-
-                <Button
-                  mode="contained"
-                  onPress={handleSubmitPayment}
-                  loading={isProcessingPayment}
-                  style={{ marginTop: 16 }}
-                >
-                  Kumpirmahin ang Bayad
-                </Button>
-              </ScrollView>
-            ) : null}
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* New Utang / Credit Modal */}
-      <Modal visible={newUtangModalVisible} transparent animationType="slide">
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalBackdrop}>
-          <View style={[styles.modalContent, { backgroundColor: theme.colors.surface }]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Magtala ng Bagong Utang</Text>
-              <IconButton icon="close" size={20} onPress={() => setNewUtangModalVisible(false)} />
-            </View>
-
-            <ScrollView>
-              <Text style={styles.inputLabel}>Pumili ng Customer o Magdagdag</Text>
-              {customers.length > 0 ? (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-                  {customers.map((c) => (
-                    <Chip
-                      key={c.id}
-                      selected={selectedCustomerId === c.id}
-                      onPress={() => setSelectedCustomerId(selectedCustomerId === c.id ? "" : c.id)}
-                      style={[styles.customerSelectChip, selectedCustomerId === c.id && styles.selectedMethod]}
-                    >
-                      {c.name}
-                    </Chip>
-                  ))}
-                </ScrollView>
-              ) : null}
-
-              {!selectedCustomerId && (
-                <>
-                  <Text style={styles.inputLabel}>Bagong Pangalan ng Customer</Text>
-                  <TextInput
-                    style={styles.modalTextInput}
-                    placeholder="Juan Dela Cruz"
-                    value={newCustomerName}
-                    onChangeText={setNewCustomerName}
-                  />
-
-                  <Text style={styles.inputLabel}>Numero ng Telepono</Text>
-                  <TextInput
-                    style={styles.modalTextInput}
-                    placeholder="09171234567"
-                    keyboardType="phone-pad"
-                    value={newCustomerPhone}
-                    onChangeText={setNewCustomerPhone}
-                  />
-
-                  <Text style={styles.inputLabel}>Credit Limit (₱)</Text>
-                  <TextInput
-                    style={styles.modalTextInput}
-                    placeholder="1000"
-                    keyboardType="numeric"
-                    value={newCustomerCreditLimit}
-                    onChangeText={setNewCustomerCreditLimit}
-                  />
-                </>
-              )}
-
-              <Text style={styles.inputLabel}>Halaga ng Utang (₱)</Text>
-              <TextInput
-                style={styles.modalTextInput}
-                keyboardType="decimal-pad"
-                placeholder="0.00"
-                value={newUtangAmountStr}
-                onChangeText={setNewUtangAmountStr}
-              />
-
-              <Text style={styles.inputLabel}>Takdang Petsa ng Pagbayad (YYYY-MM-DD)</Text>
-              <TextInput
-                style={styles.modalTextInput}
-                placeholder="YYYY-MM-DD"
-                value={newUtangDueDate}
-                onChangeText={setNewUtangDueDate}
-              />
-
-              <View style={styles.quickChipsRow}>
-                <Chip
-                  compact
-                  onPress={() => {
-                    const d = new Date();
-                    d.setDate(d.getDate() + 7);
-                    setNewUtangDueDate(d.toISOString().split("T")[0]);
-                  }}
-                >
-                  +7 Days
-                </Chip>
-                <Chip
-                  compact
-                  onPress={() => {
-                    const d = new Date();
-                    d.setDate(d.getDate() + 15);
-                    setNewUtangDueDate(d.toISOString().split("T")[0]);
-                  }}
-                >
-                  +15 Days
-                </Chip>
-                <Chip
-                  compact
-                  onPress={() => {
-                    const d = new Date();
-                    d.setDate(d.getDate() + 30);
-                    setNewUtangDueDate(d.toISOString().split("T")[0]);
-                  }}
-                >
-                  +30 Days
-                </Chip>
-              </View>
-
-              <Text style={styles.inputLabel}>Items / Note</Text>
-              <TextInput
-                style={styles.modalTextInput}
-                placeholder="hal. 2 Bigas, 1 Mantika"
-                value={newUtangNote}
-                onChangeText={setNewUtangNote}
-              />
-
-              <Button mode="contained" onPress={handleCreateUtang} style={{ marginTop: 16 }}>
-                Itala ang Utang
-              </Button>
-            </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+      {/* New Credit / Utang Modal */}
+      <CreditRecordModal
+        key={newUtangModalVisible ? "open" : "closed"}
+        visible={newUtangModalVisible}
+        customers={customers}
+        isDesktop={isDesktop}
+        language={language}
+        onClose={() => setNewUtangModalVisible(false)}
+        onCreated={() => {
+          setActiveTab("unpaid");
+          setSearchQuery("");
+        }}
+        addCustomer={addCustomer}
+        addDebt={addDebt}
+        getCurrency={getCurrency}
+      />
 
       {/* Customer Edit Modal */}
-      <Modal visible={customerModalVisible} transparent animationType="slide">
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalBackdrop}>
-          <View style={[styles.modalContent, { backgroundColor: theme.colors.surface }]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Credit Standing & Limit</Text>
-              <IconButton icon="close" size={20} onPress={() => setCustomerModalVisible(false)} />
-            </View>
-
-            {selectedCustomer ? (
-              <ScrollView>
-                <Text style={{ fontWeight: "700", fontSize: 16, marginBottom: 8 }}>{selectedCustomer.name}</Text>
-                <Text style={{ color: "#64748B", marginBottom: 14 }}>Phone: {selectedCustomer.phone}</Text>
-
-                <Text style={styles.inputLabel}>Credit Limit (₱)</Text>
-                <TextInput
-                  style={styles.modalTextInput}
-                  keyboardType="numeric"
-                  value={editLimitStr}
-                  onChangeText={setEditLimitStr}
-                />
-
-                <Text style={styles.inputLabel}>Risk Status / Credit Standing</Text>
-                <View style={styles.paymentMethodRow}>
-                  <Chip
-                    selected={editRiskStatus === "good"}
-                    onPress={() => setEditRiskStatus("good")}
-                    style={[styles.methodChip, editRiskStatus === "good" && { backgroundColor: "#DCFCE7" }]}
-                  >
-                    Good
-                  </Chip>
-                  <Chip
-                    selected={editRiskStatus === "warning"}
-                    onPress={() => setEditRiskStatus("warning")}
-                    style={[styles.methodChip, editRiskStatus === "warning" && { backgroundColor: "#FEF3C7" }]}
-                  >
-                    Warning
-                  </Chip>
-                  <Chip
-                    selected={editRiskStatus === "blacklisted"}
-                    onPress={() => setEditRiskStatus("blacklisted")}
-                    style={[styles.methodChip, editRiskStatus === "blacklisted" && { backgroundColor: "#FEE2E2" }]}
-                  >
-                    Blacklisted
-                  </Chip>
-                </View>
-
-                <Button mode="contained" onPress={handleSaveCustomer} style={{ marginTop: 20 }}>
-                  I-save ang Pagbabago
-                </Button>
-              </ScrollView>
-            ) : null}
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+      <CreditCustomerModal
+        key={customerModalVisible && selectedCustomer ? `open:${selectedCustomer.id}` : "closed"}
+        visible={customerModalVisible}
+        customer={selectedCustomer}
+        isDesktop={isDesktop}
+        language={language}
+        onClose={() => setCustomerModalVisible(false)}
+        onSave={async (id, updates) => {
+          await updateCustomer(id, updates);
+        }}
+        getCurrency={getCurrency}
+      />
     </View>
   );
 }
@@ -959,10 +691,13 @@ const styles = StyleSheet.create({
     height: 34,
   },
   listContent: {
+    flexGrow: 1,
     padding: 16,
     paddingTop: 4,
     gap: 12,
+    justifyContent: "flex-start",
   },
+  list: { flex: 1 },
   card: {
     padding: 14,
     borderRadius: 12,
@@ -976,6 +711,16 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
+  },
+  ledgerHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  ledgerAmount: {
+    fontSize: 16,
+    fontWeight: "800",
   },
   customerTitle: {
     fontSize: 16,
@@ -1065,6 +810,20 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "flex-end",
+  },
+  desktopModalBackdrop: {
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  desktopModalContent: {
+    maxWidth: 580,
+    width: "100%",
+    borderRadius: 16,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    elevation: 8,
+    boxShadow: "0px 4px 20px rgba(0,0,0,0.15)",
   },
   modalContent: {
     borderTopLeftRadius: 20,

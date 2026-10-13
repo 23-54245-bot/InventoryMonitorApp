@@ -1,13 +1,12 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { CameraType, CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
+import { Image } from "expo-image";
 import * as Print from "expo-print";
-import { useRouter } from "expo-router";
-import * as Sharing from "expo-sharing";
+import { Redirect, useRouter } from "expo-router";
 import { useMemo, useRef, useState } from "react";
 import {
     Alert,
     FlatList,
-    Image,
     Modal,
     Platform,
     Pressable,
@@ -29,15 +28,21 @@ import {
     useTheme
 } from "react-native-paper";
 
+import { useAuth } from "../context/auth";
 import { useStore } from "../context/store";
 import { findProductBySku, getCurrency, type CartItem, type PaymentMethod, type Product, type SaleTransaction } from "../data/freshmart";
+import { useBreakpoint } from "../hooks/useBreakpoint";
 import { translate } from "../lib/i18n";
+import { createThermalReceiptHtml, getThermalReceiptPrintSize } from "../lib/receipt";
 
 const BARCODE_TYPES = ["ean13", "ean8", "code128", "code39", "upc_a", "upc_e", "qr"] as const;
 
 export default function PosScreen() {
   const router = useRouter();
   const theme = useTheme();
+  const { session, isReady } = useAuth();
+  const breakpoint = useBreakpoint();
+  const isDesktop = breakpoint !== "mobile";
   const { state, customers, addCustomer, processCheckout } = useStore();
   const language = state.user.preferences?.language ?? "English";
 
@@ -104,7 +109,7 @@ export default function PosScreen() {
   const addToCart = (product: Product) => {
     const currentStock = product.currentStock;
     if (currentStock <= 0) {
-      Alert.alert(translate(language, "outOfStock"), `${product.name} has 0 stock available.`);
+      Alert.alert(translate(language, "outOfStock"), translate(language, "outOfStockMessage").replace("{product}", product.name));
       return;
     }
 
@@ -178,7 +183,7 @@ export default function PosScreen() {
       if (Platform.OS !== "web") {
         Vibration.vibrate([0, 100, 50, 100]);
       }
-      Alert.alert("Barcode Not Found", `No product found matching barcode/SKU: ${data}`);
+      Alert.alert(translate(language, "barcodeNotFoundTitle"), `${translate(language, "barcodeNotFoundMsg")} ${data}`);
     }
   };
 
@@ -190,7 +195,6 @@ export default function PosScreen() {
     const datePart = now.toISOString().slice(0, 10).replace(/-/g, "");
     const randPart = Math.random().toString(36).slice(2, 6).toUpperCase();
     setRefNumber(`TXN-${datePart}-${randPart}`);
-    setRefNumber("");
     setCheckoutVisible(true);
   };
 
@@ -212,7 +216,7 @@ export default function PosScreen() {
     if (isCredit || isSplitCredit) {
       if (!customerIdToUse) {
         if (!newCustName.trim()) {
-          Alert.alert("Customer Required", "Please select an existing customer or enter a customer name for credit/utang purchase.");
+          Alert.alert("Customer Required", "Please select an existing customer or enter a customer name for a credit purchase.");
           return;
         }
         const created = await addCustomer({
@@ -308,114 +312,42 @@ export default function PosScreen() {
 
   const handlePrintOrShareReceipt = async () => {
     if (!completedSale) return;
-    const storeName = state.user.storeName || "StockTrack Store";
-    const dateStr = new Date(completedSale.timestamp).toLocaleString();
-
-    const itemsHtml = completedSale.items
-      .map(
-        (i) => `
-        <tr>
-          <td style="padding: 6px 0; border-bottom: 1px dashed #ccc;">
-            <strong>${i.productName}</strong><br />
-            <small>${i.quantity} x ${getCurrency(i.unitPrice)}</small>
-          </td>
-          <td style="text-align: right; vertical-align: top; padding: 6px 0; border-bottom: 1px dashed #ccc;">
-            ${getCurrency(i.totalPrice)}
-          </td>
-        </tr>
-      `
-      )
-      .join("");
-
-    const html = `
-      <html>
-        <body style="font-family: monospace; padding: 24px; max-width: 320px; margin: 0 auto; color: #111;">
-          <div style="text-align: center; margin-bottom: 16px;">
-            <h2 style="margin: 0;">${storeName}</h2>
-            <p style="margin: 4px 0;">Official Sales Receipt</p>
-            <p style="margin: 2px 0; font-size: 11px;">Receipt: ${completedSale.receiptNumber}</p>
-            <p style="margin: 2px 0; font-size: 11px;">${dateStr}</p>
-          </div>
-          <hr style="border: 1px dashed #444;" />
-          <table style="width: 100%; border-collapse: collapse; margin: 12px 0;">
-            ${itemsHtml}
-          </table>
-          <hr style="border: 1px dashed #444;" />
-          <div style="font-size: 13px; line-height: 1.6;">
-            <div style="display: flex; justify-content: space-between;">
-              <span>Subtotal:</span><span>${getCurrency(completedSale.subtotal)}</span>
-            </div>
-            ${
-              completedSale.discount > 0
-                ? `<div style="display: flex; justify-content: space-between; color: #b91c1c;">
-                     <span>Discount:</span><span>-${getCurrency(completedSale.discount)}</span>
-                   </div>`
-                : ""
-            }
-            <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 16px; margin-top: 6px;">
-              <span>TOTAL:</span><span>${getCurrency(completedSale.totalAmount)}</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; margin-top: 6px;">
-              <span>Payment:</span>
-              <span>${completedSale.paymentMethod.toUpperCase()}</span>
-            </div>
-            ${
-              completedSale.referenceNumber
-                ? `<div style="display: flex; justify-content: space-between;">
-                     <span>Ref No:</span><span>${completedSale.referenceNumber}</span>
-                   </div>`
-                : ""
-            }
-            ${
-              completedSale.customerName
-                ? `<div style="display: flex; justify-content: space-between;">
-                     <span>Customer:</span><span>${completedSale.customerName}</span>
-                   </div>`
-                : ""
-            }
-            ${
-              completedSale.splitCashAmount
-                ? `<div style="display: flex; justify-content: space-between; font-size: 11px; color: #555;">
-                     <span>Split:</span><span>Cash ${getCurrency(completedSale.splitCashAmount)} + ${completedSale.splitOtherMethod?.toUpperCase()} ${getCurrency(completedSale.splitOtherAmount ?? 0)}</span>
-                   </div>`
-                : ""
-            }
-            ${
-              completedSale.paymentMethod === "cash"
-                ? `<div style="display: flex; justify-content: space-between;">
-                     <span>Tendered:</span><span>${getCurrency(completedSale.amountTendered)}</span>
-                   </div>
-                   <div style="display: flex; justify-content: space-between;">
-                     <span>Change Due:</span><span>${getCurrency(completedSale.changeAmount)}</span>
-                   </div>`
-                : ""
-            }
-          </div>
-          <div style="text-align: center; margin-top: 24px; font-size: 12px;">
-            <p>Cashier: ${completedSale.cashierName}</p>
-            <p>Maraming Salamat Po!</p>
-          </div>
-        </body>
-      </html>
-    `;
+    const html = createThermalReceiptHtml(completedSale, {
+      name: state.user.storeName,
+      address: state.user.address,
+      phone: state.user.phone,
+      email: state.user.storeEmail,
+    }, getCurrency);
+    const printSize = getThermalReceiptPrintSize(completedSale);
 
     try {
-      if (Platform.OS !== "web") {
-        const { uri } = await Print.printToFileAsync({ html });
-        await Sharing.shareAsync(uri);
-      } else {
-        await Print.printAsync({ html });
-      }
+      await Print.printAsync({ html, ...printSize });
     } catch {
       Alert.alert("Notice", "Receipt preview is ready.");
     }
   };
 
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace("/(tabs)");
+  };
+
+  if (!isReady) {
+    return null;
+  }
+
+  if (!session) {
+    return <Redirect href="/login" />;
+  }
+
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       {/* Top Header */}
       <Appbar.Header style={[styles.header, { backgroundColor: theme.colors.primary }]}>
-        <Appbar.BackAction color={theme.colors.onPrimary} onPress={() => router.back()} />
+        <Appbar.BackAction color={theme.colors.onPrimary} onPress={handleBack} />
         <Appbar.Content
           title={translate(language, "posTitle")}
           titleStyle={[styles.headerTitle, { color: theme.colors.onPrimary }]}
@@ -433,7 +365,7 @@ export default function PosScreen() {
         <IconButton
           icon="history"
           iconColor={theme.colors.onPrimary}
-          onPress={() => router.push("/sales-history" as any)}
+          onPress={() => router.push("/sales-history")}
         />
       </Appbar.Header>
 
@@ -454,7 +386,11 @@ export default function PosScreen() {
             </CameraView>
           ) : (
             <View style={styles.permissionFallback}>
-              <Text style={{ color: "#fff", marginBottom: 8 }}>Camera permission needed to scan barcodes.</Text>
+              <Text style={{ color: "#fff", marginBottom: 8, textAlign: "center" }}>
+                {Platform.OS === "web"
+                  ? "Camera permission needed to scan barcodes. Allow camera access in your browser."
+                  : "Camera permission needed to scan barcodes."}
+              </Text>
               <Button mode="contained" onPress={requestCameraPermission}>Grant Permission</Button>
             </View>
           )}
@@ -501,6 +437,10 @@ export default function PosScreen() {
         data={filteredProducts}
         keyExtractor={(item) => item.id}
         numColumns={2}
+        initialNumToRender={12}
+        maxToRenderPerBatch={12}
+        windowSize={5}
+        removeClippedSubviews={Platform.OS !== "web"}
         contentContainerStyle={styles.productList}
         renderItem={({ item }) => {
           const sellingPrice = item.srpPrice && item.srpPrice > 0 ? item.srpPrice : item.unitPrice;
@@ -591,8 +531,8 @@ export default function PosScreen() {
 
       {/* Expanded Cart Modal */}
       <Modal visible={cartExpanded} animationType="slide" transparent>
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.cartModalCard, { backgroundColor: theme.colors.surface }]}>
+        <View style={[styles.modalBackdrop, isDesktop && styles.desktopModalBackdrop]}>
+          <View style={[styles.cartModalCard, { backgroundColor: theme.colors.surface }, isDesktop && styles.desktopModalCard]}>
             <View style={styles.cartModalHeader}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                 <MaterialCommunityIcons name="cart" size={22} color={theme.colors.primary} />
@@ -615,6 +555,9 @@ export default function PosScreen() {
             <FlatList
               data={cart}
               keyExtractor={(item) => item.product.id}
+              initialNumToRender={8}
+              maxToRenderPerBatch={8}
+              windowSize={5}
               style={styles.cartList}
               renderItem={({ item }) => (
                 <View style={styles.cartItemRow}>
@@ -701,8 +644,8 @@ export default function PosScreen() {
 
       {/* Checkout / Payment Modal */}
       <Modal visible={checkoutVisible} animationType="slide" transparent>
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.checkoutModalCard, { backgroundColor: theme.colors.surface }]}>
+        <View style={[styles.modalBackdrop, isDesktop && styles.desktopModalBackdrop]}>
+          <View style={[styles.checkoutModalCard, { backgroundColor: theme.colors.surface }, isDesktop && styles.desktopModalCard]}>
             <View style={styles.cartModalHeader}>
               <Text style={[styles.cartModalTitle, { color: theme.colors.onSurface }]}>
                 {translate(language, "paymentMethod")}
@@ -716,16 +659,17 @@ export default function PosScreen() {
                 {([
                   { key: "cash", label: translate(language, "cash"), icon: "cash" },
                   { key: "e_wallet", label: "GCash / Maya", icon: "cellphone-check" },
-                  { key: "credit", label: translate(language, "utang") || "Utang", icon: "book-account-outline" },
+                  { key: "credit", label: translate(language, "utang") || "Credit", icon: "book-account-outline" },
                   { key: "split", label: translate(language, "splitPayment") || "Split", icon: "call-split" },
-                  { key: "credit", label: translate(language, "creditUtang") || "Utang (Credit)", icon: "book-account-outline" },
-                  { key: "split", label: translate(language, "splitPayment") || "Split Payment", icon: "call-split" },
                   { key: "card", label: translate(language, "card"), icon: "credit-card-outline" },
                   { key: "other", label: translate(language, "other"), icon: "dots-horizontal-circle-outline" },
                 ] as const).map((m) => (
                   <Pressable
                     key={m.key}
                     onPress={() => setPaymentMethod(m.key)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Payment method: ${m.label}`}
+                    accessibilityState={{ selected: paymentMethod === m.key }}
                     style={[
                       styles.paymentMethodCard,
                       {
@@ -735,14 +679,16 @@ export default function PosScreen() {
                       },
                     ]}
                   >
-                    <MaterialCommunityIcons
-                      name={m.icon as any}
-                      size={24}
-                      size={22}
-                      color={paymentMethod === m.key ? theme.colors.primary : theme.colors.onSurfaceVariant}
-                    />
+                    <View style={styles.paymentMethodIconWrap}>
+                      <MaterialCommunityIcons
+                        name={m.icon as any}
+                        size={26}
+                        color={paymentMethod === m.key ? theme.colors.primary : theme.colors.onSurfaceVariant}
+                      />
+                      {paymentMethod === m.key ? <MaterialCommunityIcons name="check-circle" size={16} color={theme.colors.primary} style={styles.paymentMethodCheck} /> : null}
+                    </View>
                     <Text
-                      numberOfLines={1}
+                      numberOfLines={2}
                       style={[
                         styles.paymentMethodText,
                         { color: paymentMethod === m.key ? theme.colors.primary : theme.colors.onSurface },
@@ -918,8 +864,9 @@ export default function PosScreen() {
                         {qrUri ? (
                           <Image
                             source={{ uri: qrUri }}
-                            style={{ width: 140, height: 140, borderRadius: 8, marginBottom: 8 }}
-                            resizeMode="contain"
+                            style={{ width: 280, height: 280, borderRadius: 8, marginBottom: 8, backgroundColor: "#FFFFFF" }}
+                            contentFit="contain"
+                            cachePolicy="memory-disk"
                           />
                         ) : null}
                         {accName ? (
@@ -977,7 +924,7 @@ export default function PosScreen() {
               {paymentMethod === "credit" ? (
                 <View style={[styles.paymentDetailBox, { backgroundColor: theme.colors.surfaceVariant, borderColor: theme.colors.outlineVariant }]}>
                   <Text style={[styles.inputLabel, { color: theme.colors.onSurface, fontWeight: "700", marginBottom: 8 }]}>
-                    Select Customer (Utang Ledger)
+                    Select Customer (Credit Ledger)
                   </Text>
 
                   {/* Customer List Chips */}
@@ -1023,7 +970,7 @@ export default function PosScreen() {
                           </Text>
                           {isExceeded ? (
                             <Text style={{ fontSize: 12, color: theme.colors.error, fontWeight: "700", marginTop: 4 }}>
-                              ⚠️ This purchase exceeds the customer's credit limit!
+                              ⚠️ This purchase exceeds the customer&apos;s credit limit!
                             </Text>
                           ) : null}
                         </View>
@@ -1136,7 +1083,7 @@ export default function PosScreen() {
                       style={{ flex: 1 }}
                       textStyle={{ fontWeight: "700" }}
                     >
-                      Utang / Credit
+                      Credit
                     </Chip>
                   </View>
 
@@ -1158,7 +1105,7 @@ export default function PosScreen() {
                   ) : (
                     <View>
                       <Text style={[styles.inputLabel, { color: theme.colors.onSurface, fontWeight: "600", marginBottom: 6 }]}>
-                        Select Customer for Remaining Utang:
+                          Select Customer for Remaining Credit:
                       </Text>
                       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
                         <Chip
@@ -1243,7 +1190,7 @@ export default function PosScreen() {
                 ) : paymentMethod === "credit" ? (
                   <View style={[styles.summaryLine, { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: "#00000018" }]}>
                     <Text style={{ fontWeight: "700", color: "#d97706" }}>
-                      Added to Utang:
+                      Added to Credit:
                     </Text>
                     <Text style={{ fontWeight: "800", fontSize: 16, color: "#d97706" }}>
                       {getCurrency(cartGrandTotal)}
@@ -1270,8 +1217,8 @@ export default function PosScreen() {
 
       {/* Receipt & Success Dialog */}
       <Modal visible={!!completedSale} animationType="fade" transparent>
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.receiptModalCard, { backgroundColor: theme.colors.surface }]}>
+        <View style={[styles.modalBackdrop, isDesktop && styles.desktopModalBackdrop]}>
+          <View style={[styles.receiptModalCard, { backgroundColor: theme.colors.surface }, isDesktop && styles.desktopModalCard]}>
             <View style={styles.receiptHeader}>
               <MaterialCommunityIcons name="check-circle" size={48} color={theme.colors.secondary} />
               <Text style={[styles.receiptTitle, { color: theme.colors.onSurface }]}>
@@ -1452,6 +1399,23 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "flex-end",
   },
+  desktopModalBackdrop: {
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  desktopModalCard: {
+    maxWidth: 580,
+    width: "100%",
+    borderRadius: 16,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    elevation: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+  },
   cartModalCard: {
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
@@ -1500,27 +1464,36 @@ const styles = StyleSheet.create({
     rowGap: 10,
     columnGap: 10,
     marginBottom: 16,
-    flexWrap: "wrap",
   },
   paymentMethodCard: {
-    flex: 1,
-    width: "30%",
     width: "48%",
-    flexDirection: "row",
+    minHeight: 78,
+    flexDirection: "column",
     alignItems: "center",
-    padding: 10,
-    borderRadius: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
+    justifyContent: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 8,
     borderRadius: 12,
     borderWidth: 1.5,
-    gap: 8,
+    gap: 4,
   },
-  paymentMethodText: { fontSize: 11, fontWeight: "700", marginTop: 4, textAlign: "center" },
+  paymentMethodIconWrap: {
+    width: 30,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  },
+  paymentMethodCheck: {
+    position: "absolute",
+    right: -8,
+    top: -5,
+  },
   paymentMethodText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "700",
-    flexShrink: 1,
+    lineHeight: 18,
+    textAlign: "center",
   },
   paymentDetailBox: {
     borderRadius: 12,

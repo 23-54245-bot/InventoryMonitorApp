@@ -1,8 +1,8 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Print from "expo-print";
-import { useRouter } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
 import * as Sharing from "expo-sharing";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
     FlatList,
     Platform,
@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import {
     Appbar,
+    Button,
     Card,
     Chip,
     Divider,
@@ -21,22 +22,21 @@ import {
     useTheme,
 } from "react-native-paper";
 
+import { useAuth } from "../context/auth";
 import { useStore } from "../context/store";
 import { getCurrency, type SaleTransaction } from "../data/freshmart";
 import { translate } from "../lib/i18n";
+import { createThermalReceiptHtml, getThermalReceiptPrintSize } from "../lib/receipt";
 
 export default function SalesHistoryScreen() {
   const router = useRouter();
   const theme = useTheme();
+  const { session, isReady } = useAuth();
   const { sales, loadSales, state } = useStore();
   const language = state.user.preferences.language ?? "English";
 
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
   const [filterPayment, setFilterPayment] = useState<string>("All");
-
-  useEffect(() => {
-    void loadSales();
-  }, []);
 
   const filteredSales = useMemo(() => {
     if (filterPayment === "All") return sales;
@@ -51,86 +51,95 @@ export default function SalesHistoryScreen() {
     return filteredSales.reduce((sum, s) => sum + s.totalItems, 0);
   }, [filteredSales]);
 
-  const handleShareReceipt = async (sale: SaleTransaction) => {
-    const storeName = state.user.storeName || "StockTrack Store";
-    const dateStr = new Date(sale.timestamp).toLocaleString();
+  const getReceiptHtml = (sale: SaleTransaction) => {
+    return createThermalReceiptHtml(sale, {
+      name: state.user.storeName,
+      address: state.user.address,
+      phone: state.user.phone,
+      email: state.user.storeEmail,
+    }, getCurrency);
+  };
 
-    const itemsHtml = sale.items
-      .map(
-        (i) => `
-        <tr>
-          <td style="padding: 6px 0; border-bottom: 1px dashed #ccc;">
-            <strong>${i.productName}</strong><br />
-            <small>${i.quantity} x ${getCurrency(i.unitPrice)}</small>
-          </td>
-          <td style="text-align: right; vertical-align: top; padding: 6px 0; border-bottom: 1px dashed #ccc;">
-            ${getCurrency(i.totalPrice)}
-          </td>
-        </tr>
-      `
-      )
-      .join("");
-
-    const html = `
-      <html>
-        <body style="font-family: monospace; padding: 24px; max-width: 320px; margin: 0 auto; color: #111;">
-          <div style="text-align: center; margin-bottom: 16px;">
-            <h2 style="margin: 0;">${storeName}</h2>
-            <p style="margin: 4px 0;">Official Sales Receipt</p>
-            <p style="margin: 2px 0; font-size: 11px;">Receipt: ${sale.receiptNumber}</p>
-            <p style="margin: 2px 0; font-size: 11px;">${dateStr}</p>
-          </div>
-          <hr style="border: 1px dashed #444;" />
-          <table style="width: 100%; border-collapse: collapse; margin: 12px 0;">
-            ${itemsHtml}
-          </table>
-          <hr style="border: 1px dashed #444;" />
-          <div style="font-size: 13px; line-height: 1.6;">
-            <div style="display: flex; justify-content: space-between;">
-              <span>Subtotal:</span><span>${getCurrency(sale.subtotal)}</span>
-            </div>
-            ${
-              sale.discount > 0
-                ? `<div style="display: flex; justify-content: space-between; color: #b91c1c;">
-                     <span>Discount:</span><span>-${getCurrency(sale.discount)}</span>
-                   </div>`
-                : ""
-            }
-            <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 16px; margin-top: 6px;">
-              <span>TOTAL:</span><span>${getCurrency(sale.totalAmount)}</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; margin-top: 6px;">
-              <span>Payment (${sale.paymentMethod.toUpperCase()}):</span>
-              <span>${getCurrency(sale.amountTendered)}</span>
-            </div>
-            <div style="display: flex; justify-content: space-between;">
-              <span>Change Due:</span><span>${getCurrency(sale.changeAmount)}</span>
-            </div>
-          </div>
-          <div style="text-align: center; margin-top: 24px; font-size: 12px;">
-            <p>Cashier: ${sale.cashierName}</p>
-            <p>Thank you for your business!</p>
-          </div>
-        </body>
-      </html>
-    `;
-
+  const handlePrintReceipt = async (sale: SaleTransaction) => {
     try {
-      if (Platform.OS !== "web") {
-        const { uri } = await Print.printToFileAsync({ html });
-        await Sharing.shareAsync(uri);
-      } else {
-        await Print.printAsync({ html });
-      }
+      const html = getReceiptHtml(sale);
+      await Print.printAsync({ html, ...getThermalReceiptPrintSize(sale) });
     } catch {
-      // ignore
+      // Ignore print failures silently; they are non-blocking for the sales flow.
     }
   };
+
+  const handleDownloadReceipt = async (sale: SaleTransaction) => {
+    try {
+      const html = getReceiptHtml(sale);
+      if (Platform.OS === "web") {
+        const blob = new Blob([html], { type: "text/html" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `receipt-${sale.receiptNumber}.html`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } else {
+        const { uri } = await Print.printToFileAsync({ html, ...getThermalReceiptPrintSize(sale), base64: false });
+        await Sharing.shareAsync(uri, {
+          UTI: ".pdf",
+          mimeType: "application/pdf",
+          dialogTitle: `Download Receipt ${sale.receiptNumber}`,
+        });
+      }
+    } catch {
+      // Ignore download failures silently; the receipt action remains optional.
+    }
+  };
+
+  const handleShareReceipt = async (sale: SaleTransaction) => {
+    try {
+      const html = getReceiptHtml(sale);
+      if (Platform.OS === "web") {
+        if (typeof navigator !== "undefined" && navigator.share) {
+          await navigator.share({
+            title: `Receipt ${sale.receiptNumber}`,
+            text: `Receipt ${sale.receiptNumber} - Total: ${getCurrency(sale.totalAmount)}`,
+          });
+        } else {
+          await Print.printAsync({ html });
+        }
+      } else {
+        const { uri } = await Print.printToFileAsync({ html, ...getThermalReceiptPrintSize(sale), base64: false });
+        await Sharing.shareAsync(uri, {
+          UTI: ".pdf",
+          mimeType: "application/pdf",
+          dialogTitle: `Share Receipt ${sale.receiptNumber}`,
+        });
+      }
+    } catch {
+      // Ignore share failures silently; receipt sharing is best-effort.
+    }
+  };
+
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace("/(tabs)");
+  };
+
+  if (!isReady) {
+    return null;
+  }
+
+  if (!session) {
+    return <Redirect href="/login" />;
+  }
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       <Appbar.Header style={[styles.header, { backgroundColor: theme.colors.primary }]}>
-        <Appbar.BackAction color={theme.colors.onPrimary} onPress={() => router.back()} />
+        <Appbar.BackAction color={theme.colors.onPrimary} onPress={handleBack} />
         <Appbar.Content
           title={translate(language, "salesHistory")}
           titleStyle={[styles.headerTitle, { color: theme.colors.onPrimary }]}
@@ -158,23 +167,44 @@ export default function SalesHistoryScreen() {
 
       {/* Filter Chips */}
       <View style={styles.filterRow}>
-        {["All", "cash", "card", "e_wallet"].map((m) => (
-          <Chip
-            key={m}
-            compact
-            selected={filterPayment === m}
-            onPress={() => setFilterPayment(m)}
-            style={[styles.filterChip, filterPayment === m && { backgroundColor: theme.colors.primaryContainer }]}
-          >
-            {m === "All"
-              ? "All Payments"
-              : m === "cash"
-              ? "Cash"
+        {(["All", "cash", "card", "e_wallet", "credit", "split"] as const).map((m) => {
+          const isSelected = filterPayment === m;
+          const label = m === "All"
+            ? translate(language, "allSales")
+            : m === "cash"
+              ? translate(language, "cashSaleFilter")
               : m === "card"
-              ? "Card"
-              : "E-Wallet"}
-          </Chip>
-        ))}
+                ? translate(language, "cardFilter")
+                : m === "e_wallet"
+                  ? translate(language, "eWalletFilter")
+                  : m === "credit"
+                    ? translate(language, "creditFilter")
+                    : translate(language, "splitPayment");
+          return (
+            <Chip
+              key={m}
+              compact
+              selected={isSelected}
+              onPress={() => setFilterPayment(m)}
+              style={[
+                styles.filterChip,
+                {
+                  backgroundColor: isSelected ? theme.colors.primary : theme.colors.surface,
+                  borderColor: isSelected ? theme.colors.primary : theme.colors.outline,
+                  borderWidth: 1,
+                },
+              ]}
+              textStyle={{
+                color: isSelected ? theme.colors.onPrimary : theme.colors.onSurface,
+                fontWeight: isSelected ? "700" : "500",
+                fontSize: 13,
+              }}
+              selectedColor={theme.colors.onPrimary}
+            >
+              {label}
+            </Chip>
+          );
+        })}
       </View>
 
       {/* Sales List */}
@@ -204,10 +234,12 @@ export default function SalesHistoryScreen() {
                       <Text style={[styles.saleAmount, { color: theme.colors.primary }]}>
                         {getCurrency(item.totalAmount)}
                       </Text>
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-                        <Chip compact style={{ height: 22 }}>
-                          <Text style={{ fontSize: 10, textTransform: "uppercase" }}>{item.paymentMethod}</Text>
-                        </Chip>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        <View style={styles.paymentBadge}>
+                          <Text style={styles.paymentBadgeText}>
+                            {item.paymentMethod === "e_wallet" ? "E-WALLET" : item.paymentMethod.replace("_", " ").toUpperCase()}
+                          </Text>
+                        </View>
                         <MaterialCommunityIcons
                           name={isExpanded ? "chevron-up" : "chevron-down"}
                           size={20}
@@ -259,13 +291,48 @@ export default function SalesHistoryScreen() {
                       </View>
                     ) : null}
 
-                    <View style={{ flexDirection: "row", justifyContent: "flex-end", marginTop: 8 }}>
-                      <IconButton
-                        icon="share-variant-outline"
-                        size={18}
+                    {/* TOTAL row */}
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4, marginBottom: 10 }}>
+                      <Text style={{ fontSize: 14, fontWeight: "800", color: theme.colors.onSurface }}>TOTAL</Text>
+                      <Text style={{ fontSize: 14, fontWeight: "800", color: theme.colors.primary }}>{getCurrency(item.totalAmount)}</Text>
+                    </View>
+
+                    {/* Action buttons */}
+                    <View style={styles.receiptActionRow}>
+                      <Button
+                        mode="contained"
+                        icon="printer"
+                        buttonColor={theme.colors.primary}
+                        textColor={theme.colors.onPrimary}
+                        onPress={() => handlePrintReceipt(item)}
+                        style={styles.receiptBtn}
+                        contentStyle={styles.receiptBtnContent}
+                        labelStyle={styles.receiptBtnLabel}
+                      >
+                        Print
+                      </Button>
+                      <Button
+                        mode="outlined"
+                        icon="download"
+                        textColor={theme.colors.primary}
+                        onPress={() => handleDownloadReceipt(item)}
+                        style={[styles.receiptBtn, { borderColor: theme.colors.outline }]}
+                        contentStyle={styles.receiptBtnContent}
+                        labelStyle={styles.receiptBtnLabel}
+                      >
+                        Download
+                      </Button>
+                      <Button
                         mode="contained-tonal"
+                        icon="share-variant"
+                        textColor={theme.colors.onSurface}
                         onPress={() => handleShareReceipt(item)}
-                      />
+                        style={styles.receiptBtn}
+                        contentStyle={styles.receiptBtnContent}
+                        labelStyle={styles.receiptBtnLabel}
+                      >
+                        Share
+                      </Button>
                     </View>
                   </View>
                 ) : null}
@@ -306,7 +373,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     gap: 8,
   },
-  filterChip: { height: 32 },
+  filterChip: { borderRadius: 8 },
   listContent: { padding: 12, paddingBottom: 40 },
   saleCard: {
     marginBottom: 10,
@@ -333,5 +400,37 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 80,
+  },
+  receiptActionRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+  },
+  receiptBtn: {
+    flex: 1,
+    borderRadius: 10,
+  },
+  receiptBtnContent: {
+    height: 38,
+  },
+  receiptBtnLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  paymentBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: "#DCFCE7",
+    borderWidth: 1,
+    borderColor: "#86EFAC",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  paymentBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#15803D",
+    letterSpacing: 0.3,
   },
 });

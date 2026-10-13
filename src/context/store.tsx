@@ -1,11 +1,16 @@
+import * as Crypto from "expo-crypto";
 import { createContext, ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { AppState } from "react-native";
 import { AppLanguage } from "../lib/i18n";
+import { showAlert } from "../lib/alert";
 
 import {
     AuditLog,
     CartItem,
+    CashShift,
     Customer,
     Debt,
+    DebtPayment,
     findProductBySku,
     FreshMartState,
     getCategoryBreakdown,
@@ -16,40 +21,56 @@ import {
     NotificationItem,
     PaymentMethod,
     Product,
+    ProductBatch,
     SaleItem,
     SaleTransaction,
     StockMovement,
     StorePaymentQRs,
-    TeamMember
+    TeamMember,
 } from "../data/freshmart";
 import { readStoredString, writeStoredString } from "../lib/storage";
 import { supabase } from "../lib/supabase";
 import {
+    closeCashShift,
     fetchAuditLogs,
+    fetchBatches,
+    fetchCashShifts,
     fetchCustomers,
+    fetchDebtPayments,
     fetchDebts,
     fetchMovements,
     fetchNotifications,
     fetchProducts,
     fetchSales,
     insertAuditLog,
-    insertDebt,
-    insertMovement,
+    insertCashShift,
     insertNotification,
-    insertSale,
+    removeBatch,
     removeCustomer,
     removeNotification,
     removeProduct,
+    resolveStoreMediaUri,
     updateAllNotificationsRead,
-    updateDebtPayment,
     updateNotificationRead,
     updateStoreQRs,
-    upsertCustomer,
-    upsertProduct,
+    upsertBatch,
+    upsertCustomer
 } from "../lib/supabase-store";
-import { useAuth } from "./auth";
+import {
+    clearLegacyOfflineCache,
+    enqueueSyncOp,
+    getOfflineCacheScope,
+    loadOfflineCache,
+    processSyncQueue,
+    saveOfflineCache,
+    setOfflineCacheScope,
+    setSyncQueueStoreId,
+    type SyncOpType,
+} from "../lib/sync-queue";
+import { useAuth, type AuthSession } from "./auth";
 
 type StoreContextValue = {
+  isStoreReady: boolean;
   state: FreshMartState;
   summary: ReturnType<typeof getDashboardSummary>;
   categoryBreakdown: ReturnType<typeof getCategoryBreakdown>;
@@ -60,7 +81,11 @@ type StoreContextValue = {
   sales: SaleTransaction[];
   customers: Customer[];
   debts: Debt[];
+  debtPayments: DebtPayment[];
   auditLogs: AuditLog[];
+  batches: ProductBatch[];
+  shifts: CashShift[];
+  currentShift: CashShift | null;
   processCheckout: (checkoutData: {
     items: CartItem[];
     paymentMethod: PaymentMethod;
@@ -78,6 +103,7 @@ type StoreContextValue = {
     splitOtherMethod?: "e_wallet" | "credit";
     redeemedPoints?: number;
   }) => Promise<{ success: boolean; sale?: SaleTransaction; error?: string }>;
+  voidSale: (saleId: string, reason: string) => Promise<{ success: boolean; error?: string }>;
   loadSales: () => Promise<void>;
   getProduct: (id: string) => Product | undefined;
   getProductBySku: (sku: string) => Product | undefined;
@@ -86,6 +112,10 @@ type StoreContextValue = {
   addProduct: (product: Product) => void;
   updateProduct: (productId: string, patch: Partial<Product>) => void;
   deleteProduct: (productId: string) => void;
+  addBatch: (batch: Omit<ProductBatch, "id" | "createdAt">) => Promise<boolean>;
+  deleteBatch: (batchId: string) => Promise<boolean>;
+  openShift: (openingFloat: number) => Promise<boolean>;
+  closeShift: (countedCash: number, notes?: string) => Promise<boolean>;
   markNotificationRead: (notificationId: string) => void;
   markAllNotificationsRead: () => void;
   deleteNotification: (notificationId: string) => void;
@@ -181,19 +211,76 @@ function createNotification(type: NotificationItem["type"], message: string, tit
   };
 }
 
+async function queueAndSync(type: SyncOpType, payload: unknown): Promise<void> {
+  try {
+    await enqueueSyncOp(type, payload);
+    await processSyncQueue();
+  } catch (error) {
+    showAlert(
+      "Offline changes could not be saved",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
+function reportSyncSetupError(error: unknown): void {
+  showAlert("Offline changes could not be saved", error instanceof Error ? error.message : String(error));
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   const { session, isReady: authReady } = useAuth();
+  const sessionKey = session ? `session:${session.email.toLowerCase()}` : "signed-out";
+
+  return (
+    <SessionStoreProvider key={sessionKey} session={session} authReady={authReady}>
+      {children}
+    </SessionStoreProvider>
+  );
+}
+
+function SessionStoreProvider({ children, session, authReady }: {
+  children: ReactNode;
+  session: AuthSession | null;
+  authReady: boolean;
+}) {
   const [state, setState] = useState<FreshMartState>(() => createState());
   const [sales, setSales] = useState<SaleTransaction[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [debts, setDebts] = useState<Debt[]>([]);
+  const [debtPayments, setDebtPayments] = useState<DebtPayment[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [batches, setBatches] = useState<ProductBatch[]>([]);
+  const [shifts, setShifts] = useState<CashShift[]>([]);
+  const [isStoreReady, setIsStoreReady] = useState(false);
+  const customersRef = useRef<Customer[]>([]);
   const loadedStorageKey = useRef<string | null>(null);
 
-  // Preferences-only AsyncStorage key (products/movements/notifications now live in Supabase)
+  useEffect(() => {
+    customersRef.current = customers;
+  }, [customers]);
+
   const prefsStorageKey = session
     ? `${STORAGE_KEY}.prefs.${encodeURIComponent(session.email.toLowerCase())}`
     : null;
+
+  // ── Auto-sync on app foreground ────────────────────────────────────────────
+  useEffect(() => {
+    setSyncQueueStoreId(state.user.storeId ?? "");
+    setOfflineCacheScope(state.user.storeId ? `store:${state.user.storeId}` : session?.email ? `user:${session.email.toLowerCase()}` : "");
+  }, [state.user.storeId, session?.email]);
+
+  useEffect(() => {
+    void clearLegacyOfflineCache();
+  }, []);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        void processSyncQueue().catch(reportSyncSetupError);
+      }
+    });
+    return () => subscription.remove();
+  }, []);
 
   // ── Load on login ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -204,20 +291,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const accountSession = session;
 
     if (!accountSession) {
-      setState(createState());
-      setSales([]);
-      setCustomers([]);
-      setDebts([]);
-      setAuditLogs([]);
       loadedStorageKey.current = STORAGE_KEY;
+      queueMicrotask(() => setIsStoreReady(true));
       return;
     }
 
     let active = true;
 
     void (async () => {
+      let savedPrefs: Partial<FreshMartState> = {};
+      let accountWithStoreId = accountSession as typeof accountSession & { storeId?: string };
+      let cacheScope = `user:${accountSession.email.toLowerCase()}`;
+
       try {
-        // 1. Resolve store_id from Supabase profile
         let accountStoreId: string | undefined;
         let userId: string | undefined;
         const { data: currentUser } = await supabase.auth.getUser();
@@ -231,10 +317,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           accountStoreId = profile?.store_id ?? undefined;
         }
 
-        const accountWithStoreId = { ...accountSession, storeId: accountStoreId };
+        accountWithStoreId = { ...accountSession, storeId: accountStoreId };
+        cacheScope = accountStoreId
+          ? `store:${accountStoreId}`
+          : `user:${userId ?? accountSession.email.toLowerCase()}`;
+        if (active) setOfflineCacheScope(cacheScope);
 
-        // 2. Load user preferences from AsyncStorage (stays local)
-        let savedPrefs: Partial<FreshMartState> = {};
         if (prefsStorageKey) {
           const stored = await readStoredString(prefsStorageKey);
           if (stored) {
@@ -242,8 +330,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
         }
 
-        // 3. Load inventory and utang/store data from Supabase (or empty if no store yet)
-        const [products, movements, notifications, loadedSales, loadedCustomers, loadedDebts, loadedAuditLogs, storeRes] = accountStoreId
+        const [
+          products,
+          movements,
+          notifications,
+          loadedSales,
+          loadedCustomers,
+          loadedDebts,
+          loadedDebtPayments,
+          loadedAuditLogs,
+          loadedBatches,
+          loadedShifts,
+          storeRes,
+        ] = accountStoreId
           ? await Promise.all([
               fetchProducts(accountStoreId),
               fetchMovements(accountStoreId),
@@ -251,30 +350,40 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               fetchSales(accountStoreId),
               fetchCustomers(accountStoreId),
               fetchDebts(accountStoreId),
+              fetchDebtPayments(accountStoreId),
               fetchAuditLogs(accountStoreId),
+              fetchBatches(accountStoreId),
+              fetchCashShifts(accountStoreId),
               supabase
                 .from("stores")
                 .select("name, phone, address, gcash_name, gcash_number, gcash_qr_url, maya_name, maya_number, maya_qr_url")
                 .eq("id", accountStoreId)
                 .maybeSingle(),
             ])
-          : [[], [], [], [], [], [], [], null] as any;
+          : [[], [], [], [], [], [], [], [], [], [], null] as any;
 
         const storeData = storeRes?.data;
+        const [gcashQrUri, mayaQrUri] = await Promise.all([
+          resolveStoreMediaUri(storeData?.gcash_qr_url),
+          resolveStoreMediaUri(storeData?.maya_qr_url),
+        ]);
         const storeQRs: StorePaymentQRs = {
           gcashName: storeData?.gcash_name ?? undefined,
           gcashNumber: storeData?.gcash_number ?? undefined,
-          gcashQrUri: storeData?.gcash_qr_url ?? undefined,
+          gcashQrUri,
           mayaName: storeData?.maya_name ?? undefined,
           mayaNumber: storeData?.maya_number ?? undefined,
-          mayaQrUri: storeData?.maya_qr_url ?? undefined,
+          mayaQrUri,
         };
 
         if (active) {
           setSales(loadedSales);
           setCustomers(loadedCustomers);
           setDebts(loadedDebts);
+          setDebtPayments(loadedDebtPayments);
           setAuditLogs(loadedAuditLogs);
+          setBatches(loadedBatches ?? []);
+          setShifts(loadedShifts ?? []);
           setState(createState(
             {
               ...savedPrefs,
@@ -292,35 +401,72 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             accountWithStoreId,
           ));
           loadedStorageKey.current = prefsStorageKey ?? STORAGE_KEY;
+          setIsStoreReady(true);
+
+          void saveOfflineCache(cacheScope, "products", products);
+          void saveOfflineCache(cacheScope, "movements", movements);
+          void saveOfflineCache(cacheScope, "notifications", notifications);
+          void saveOfflineCache(cacheScope, "sales", loadedSales);
+          void saveOfflineCache(cacheScope, "customers", loadedCustomers);
+          void saveOfflineCache(cacheScope, "debts", loadedDebts);
+          void saveOfflineCache(cacheScope, "debtPayments", loadedDebtPayments);
         }
       } catch {
         if (active) {
-          setState(createState(undefined, { ...accountSession }));
-          setSales([]);
-          setCustomers([]);
-          setDebts([]);
+          const [cachedProducts, cachedMovements, cachedNotifications, cachedSales, cachedCustomers, cachedDebts, cachedDebtPayments] =
+            await Promise.all([
+              loadOfflineCache<Product[]>(cacheScope, "products"),
+              loadOfflineCache<StockMovement[]>(cacheScope, "movements"),
+              loadOfflineCache<NotificationItem[]>(cacheScope, "notifications"),
+              loadOfflineCache<SaleTransaction[]>(cacheScope, "sales"),
+              loadOfflineCache<Customer[]>(cacheScope, "customers"),
+              loadOfflineCache<Debt[]>(cacheScope, "debts"),
+              loadOfflineCache<DebtPayment[]>(cacheScope, "debtPayments"),
+            ]);
+          setSales(cachedSales ?? []);
+          setCustomers(cachedCustomers ?? []);
+          setDebts(cachedDebts ?? []);
+          setDebtPayments(cachedDebtPayments ?? []);
           setAuditLogs([]);
+          setBatches([]);
+          setShifts([]);
+          setState(createState(
+            {
+              ...savedPrefs,
+              products: cachedProducts ?? [],
+              movements: cachedMovements ?? [],
+              notifications: cachedNotifications ?? [],
+            },
+            accountWithStoreId,
+          ));
           loadedStorageKey.current = prefsStorageKey ?? STORAGE_KEY;
+          setIsStoreReady(true);
         }
       }
     })();
 
     return () => { active = false; };
-  }, [authReady, session?.email]);
+  }, [authReady, prefsStorageKey, session]);
 
   // ── Persist user preferences to AsyncStorage ───────────────────────────────
   useEffect(() => {
     if (!prefsStorageKey || loadedStorageKey.current !== prefsStorageKey) return;
-    // Only save user preferences, not the full inventory (that's in Supabase)
-    const prefsOnly: Partial<FreshMartState> = { user: state.user, teamMembers: state.teamMembers };
+    const prefsOnly: Partial<FreshMartState> = {
+      user: { ...state.user, storeQRs: undefined },
+      teamMembers: state.teamMembers,
+    };
     void writeStoredString(prefsStorageKey, JSON.stringify(prefsOnly));
   }, [state.user, state.teamMembers, prefsStorageKey]);
+
+  useEffect(() => {
+    const cacheScope = getOfflineCacheScope();
+    if (cacheScope) void saveOfflineCache(cacheScope, "debtPayments", debtPayments);
+  }, [debtPayments]);
 
   const mutate = (updater: (current: FreshMartState) => FreshMartState) => {
     setState((current) => updater(current));
   };
 
-  // Returns the current storeId from state for Supabase writes
   const getStoreId = () => state.user.storeId;
   const getUserId = async () => {
     const { data } = await supabase.auth.getUser();
@@ -352,7 +498,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
 
       const movement: StockMovement = {
-        id: `M-${Date.now()}`,
+        id: Crypto.randomUUID(),
         productId,
         type,
         reason: type === "out" ? reason ?? "adjustment" : undefined,
@@ -386,16 +532,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         notifications.unshift(movementNote);
         newNotifications.push(movementNote);
 
-        // Optimistic Supabase write (background)
         const storeId = current.user.storeId;
         if (storeId) {
-          const updatedProduct = products.find((p) => p.id === productId);
-          if (updatedProduct) {
-            void upsertProduct(storeId, updatedProduct);
-          }
           void getUserId().then((uid) => {
-            if (newMovement) void insertMovement(storeId, uid, newMovement);
-          });
+            void queueAndSync("MOVEMENT", {
+              storeId,
+              userId: uid,
+              movement: newMovement,
+            });
+          }).catch(reportSyncSetupError);
           for (const n of newNotifications) {
             void insertNotification(storeId, n);
           }
@@ -471,16 +616,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const cashierName = state.user.name || "Cashier";
 
     const saleItems: SaleItem[] = items.map((item) => ({
+      id: Crypto.randomUUID(),
       productId: item.product.id,
       productName: item.product.name,
       sku: item.product.sku,
       quantity: item.quantity,
       unitPrice: item.price,
       totalPrice: item.price * item.quantity,
+      unitCost: item.product.unitPrice,
     }));
 
     const sale: SaleTransaction = {
-      id: `sale-${Date.now()}`,
+      id: Crypto.randomUUID(),
       receiptNumber,
       totalItems: items.reduce((sum, item) => sum + item.quantity, 0),
       subtotal,
@@ -493,6 +640,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       cashierName,
       note,
       timestamp,
+      status: "completed",
       items: saleItems,
       customerId,
       customerName,
@@ -504,8 +652,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     const newMovements: StockMovement[] = [];
     const newNotifications: NotificationItem[] = [];
-    const updatedProductsList: Product[] = [];
-
     mutate((current) => {
       const itemMap = new Map(items.map((i) => [i.product.id, i.quantity]));
       const nextProducts = current.products.map((prod) => {
@@ -513,7 +659,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (!qtyToDeduct) return prod;
         const nextStock = Math.max(0, prod.currentStock - qtyToDeduct);
         const updated = { ...prod, currentStock: nextStock, updatedAt: timestamp };
-        updatedProductsList.push(updated);
         return updated;
       });
 
@@ -522,7 +667,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
       for (const item of items) {
         const m: StockMovement = {
-          id: `M-${Date.now()}-${item.product.id.slice(-4)}`,
+          id: Crypto.randomUUID(),
           productId: item.product.id,
           type: "out",
           reason: "sale",
@@ -555,6 +700,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       };
     });
 
+    // FEFO: Deduct sold items from soonest expiring batches
+    setBatches((prevBatches) => {
+      let currentBatches = [...prevBatches];
+      for (const item of items) {
+        let remainingToDeduct = item.quantity;
+        currentBatches = currentBatches.map((b) => {
+          if (b.productId !== item.product.id || remainingToDeduct <= 0) return b;
+          const deductFromBatch = Math.min(b.quantity, remainingToDeduct);
+          remainingToDeduct -= deductFromBatch;
+          return { ...b, quantity: Math.max(0, b.quantity - deductFromBatch) };
+        });
+      }
+      return currentBatches;
+    });
+
     setSales((prev) => [sale, ...prev]);
 
     // Handle Utang / Customer Debt creation
@@ -564,7 +724,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     if (debtAmount > 0 && customerId && customerName) {
       const debt: Debt = {
-        id: `debt-${Date.now()}`,
+        id: Crypto.randomUUID(),
         storeId: state.user.storeId,
         customerId,
         customerName,
@@ -592,14 +752,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
       const storeId = state.user.storeId;
       if (storeId) {
-        void insertDebt(storeId, debt);
-        const cust = customers.find((c) => c.id === customerId);
-        if (cust) {
-          void upsertCustomer(storeId, {
-            ...cust,
-            totalDebt: cust.totalDebt + debtAmount,
-          });
-        }
+        const cust = customersRef.current.find((c) => c.id === customerId);
+        void queueAndSync("DEBT", {
+          storeId,
+          debt,
+          customer: cust ? { ...cust, totalDebt: cust.totalDebt + debtAmount } : null,
+        });
       }
     }
 
@@ -618,7 +776,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         );
         const storeId = state.user.storeId;
         if (storeId) {
-          const cust = customers.find((c) => c.id === customerId);
+          const cust = customersRef.current.find((c) => c.id === customerId);
           if (cust) {
             void upsertCustomer(storeId, {
               ...cust,
@@ -631,15 +789,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     const storeId = state.user.storeId;
     if (storeId) {
-      for (const prod of updatedProductsList) {
-        void upsertProduct(storeId, prod);
-      }
       void getUserId().then((uid) => {
-        for (const mov of newMovements) {
-          void insertMovement(storeId, uid, mov);
-        }
-        void insertSale(storeId, uid, sale);
-      });
+        void queueAndSync("SALE", {
+          storeId,
+          userId: uid,
+          sale,
+          movements: newMovements,
+        });
+      }).catch(reportSyncSetupError);
       for (const notif of newNotifications) {
         void insertNotification(storeId, notif);
       }
@@ -648,17 +805,112 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return { success: true, sale };
   };
 
+  const voidSale = async (saleId: string, reason: string): Promise<{ success: boolean; error?: string }> => {
+    const sale = sales.find((s) => s.id === saleId);
+    if (!sale) return { success: false, error: "Transaction not found" };
+    if (sale.status === "voided") return { success: false, error: "Transaction already voided" };
+
+    const storeId = getStoreId();
+    const cashierName = state.user.name || "Manager";
+    const timestamp = new Date().toISOString();
+
+    // 1. Mark sale as voided locally
+    setSales((prev) =>
+      prev.map((s) =>
+        s.id === saleId
+          ? {
+              ...s,
+              status: "voided",
+              voidReason: reason,
+              voidedAt: timestamp,
+              voidedBy: cashierName,
+            }
+          : s
+      )
+    );
+
+    // 2. Restock products and add reversal movements
+    const restockMovements: StockMovement[] = [];
+    const itemMap = new Map(sale.items.map((i) => [i.productId, i.quantity]));
+
+    mutate((current) => {
+      const nextProducts = current.products.map((prod) => {
+        const qtyToReturn = itemMap.get(prod.id);
+        if (!qtyToReturn) return prod;
+        const nextStock = prod.currentStock + qtyToReturn;
+        const updated = { ...prod, currentStock: nextStock, updatedAt: timestamp };
+        return updated;
+      });
+
+      const nextMovements = [...current.movements];
+      for (const item of sale.items) {
+        const m: StockMovement = {
+          id: Crypto.randomUUID(),
+          productId: item.productId,
+          type: "in",
+          reason: "adjustment",
+          quantity: item.quantity,
+          performedBy: cashierName,
+          timestamp,
+          note: `Restocked from Void Sale ${sale.receiptNumber} (${reason})`,
+        };
+        restockMovements.push(m);
+        nextMovements.unshift(m);
+      }
+
+      return {
+        ...current,
+        products: nextProducts,
+        movements: nextMovements,
+      };
+    });
+
+    // 3. If sale was credit, revert debt and customer balance
+    if (sale.customerId && (sale.paymentMethod === "credit" || (sale.paymentMethod === "split" && sale.splitOtherMethod === "credit"))) {
+      const debtToCancel = debts.find((d) => d.saleId === saleId && d.customerId === sale.customerId);
+      if (debtToCancel) {
+        const unreversedDebt = debtToCancel.balance;
+        setDebts((prev) => prev.filter((d) => d.id !== debtToCancel.id));
+        setCustomers((prev) =>
+          prev.map((c) =>
+            c.id === sale.customerId
+              ? { ...c, totalDebt: Math.max(0, c.totalDebt - unreversedDebt), updatedAt: timestamp }
+              : c
+          )
+        );
+      }
+    }
+
+    // 4. Offline sync op
+    if (storeId) {
+      void getUserId().then((uid) => {
+        void queueAndSync("VOID_SALE", {
+          storeId,
+          userId: uid,
+          saleId,
+          reason,
+          voidedBy: cashierName,
+          movements: restockMovements,
+        });
+      }).catch(reportSyncSetupError);
+    }
+
+    logAuditAction("Voided Sale", "sale", sale.receiptNumber, `Voided for ₱${sale.totalAmount}. Reason: ${reason}`);
+    return { success: true };
+  };
+
   const addCustomer = async (cust: Omit<Customer, "id" | "createdAt" | "updatedAt" | "totalDebt" | "loyaltyPoints">) => {
     const storeId = getStoreId();
     const newCust: Customer = {
       ...cust,
-      id: `cust-${Date.now()}`,
+      id: Crypto.randomUUID(),
       storeId,
       totalDebt: 0,
       loyaltyPoints: 0,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+    customersRef.current = [newCust, ...customersRef.current.filter((customer) => customer.id !== newCust.id)];
     setCustomers((prev) => [newCust, ...prev]);
     if (storeId) void upsertCustomer(storeId, newCust);
     logAuditAction("Created Customer", "customer", newCust.id, `Created ${newCust.name} (${newCust.phone})`);
@@ -697,7 +949,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const now = new Date().toISOString();
     const newDebt: Debt = {
       ...debtData,
-      id: `debt-${Date.now()}`,
+      id: Crypto.randomUUID(),
       storeId,
       amountPaid: 0,
       balance: debtData.amount,
@@ -714,9 +966,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       )
     );
     if (storeId) {
-      void insertDebt(storeId, newDebt);
-      const cust = customers.find((c) => c.id === debtData.customerId);
-      if (cust) void upsertCustomer(storeId, { ...cust, totalDebt: cust.totalDebt + debtData.amount });
+      const cust = customersRef.current.find((c) => c.id === debtData.customerId);
+      void queueAndSync("DEBT", {
+        storeId,
+        debt: newDebt,
+        customer: cust ? { ...cust, totalDebt: cust.totalDebt + debtData.amount } : null,
+      });
     }
     logAuditAction("Recorded Utang", "debt", newDebt.id, `${debtData.customerName}: ₱${debtData.amount}`);
     return newDebt;
@@ -738,6 +993,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const newAmountPaid = debt.amountPaid + paymentData.amount;
     const newBalance = Math.max(0, debt.amount - newAmountPaid);
     const newStatus = newBalance <= 0 ? ("paid" as const) : ("partial" as const);
+    const payment: DebtPayment = {
+      id: Crypto.randomUUID(),
+      storeId,
+      debtId: paymentData.debtId,
+      customerId: paymentData.customerId,
+      amount: paymentData.amount,
+      paymentMethod: paymentData.paymentMethod,
+      referenceNumber: paymentData.referenceNumber,
+      recordedBy: state.user.name || "Cashier",
+      note: paymentData.note,
+      createdAt: now,
+    };
+
+    setDebtPayments((current) => [payment, ...current]);
 
     setDebts((prev) =>
       prev.map((d) =>
@@ -756,28 +1025,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     );
 
     if (storeId) {
-      void updateDebtPayment(
+      void queueAndSync("DEBT_PAYMENT", {
         storeId,
-        paymentData.debtId,
-        paymentData.customerId,
-        {
-          amount: paymentData.amount,
-          paymentMethod: paymentData.paymentMethod,
-          referenceNumber: paymentData.referenceNumber,
-          recordedBy: state.user.name || "Cashier",
-          note: paymentData.note,
-        },
+        debtId: paymentData.debtId,
+        customerId: paymentData.customerId,
+        payment,
         newAmountPaid,
         newBalance,
         newStatus,
-      );
-      const cust = customers.find((c) => c.id === paymentData.customerId);
-      if (cust) {
-        void upsertCustomer(storeId, {
-          ...cust,
-          totalDebt: Math.max(0, cust.totalDebt - paymentData.amount),
-        });
-      }
+      });
     }
 
     logAuditAction(
@@ -791,16 +1047,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const updateStorePaymentQRs = async (qrs: StorePaymentQRs) => {
     const storeId = getStoreId();
+    let savedQrs = qrs;
+    if (storeId) {
+      const result = await updateStoreQRs(storeId, qrs);
+      if (!result) {
+        return false;
+      }
+      savedQrs = result;
+    }
+
     mutate((current) => ({
       ...current,
       user: {
         ...current.user,
-        storeQRs: qrs,
+        storeQRs: savedQrs,
       },
     }));
-    if (storeId) {
-      return await updateStoreQRs(storeId, qrs);
-    }
     return true;
   };
 
@@ -821,14 +1083,102 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (storeId) void insertAuditLog(storeId, log);
   };
 
-  const value = useMemo<StoreContextValue>(() => {
-    const summary = getDashboardSummary(state.products, state.movements, state.notifications);
-    const categoryBreakdown = getCategoryBreakdown(state.products);
-    const weeklyActivity = getWeeklyActivitySeries(state.movements);
-    const notifications = getNotifications(state.notifications);
-    const recentActivity = getRecentActivity(state.products, state.movements);
+  // Batches (FEFO)
+  const addBatch = async (batchData: Omit<ProductBatch, "id" | "createdAt">): Promise<boolean> => {
+    const storeId = getStoreId();
+    const newBatch: ProductBatch = {
+      ...batchData,
+      id: `batch-${Date.now()}`,
+      storeId,
+      createdAt: new Date().toISOString(),
+    };
+    setBatches((prev) =>
+      [...prev, newBatch].sort(
+        (a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime()
+      )
+    );
+    if (storeId) {
+      void upsertBatch(storeId, newBatch);
+    }
+    logAuditAction("Added Batch", "batch", newBatch.id, `Batch ${newBatch.batchNumber} (Qty: ${newBatch.quantity})`);
+    return true;
+  };
 
-    return {
+  const deleteBatch = async (batchId: string): Promise<boolean> => {
+    setBatches((prev) => prev.filter((b) => b.id !== batchId));
+    if (!batchId.startsWith("batch-")) {
+      void removeBatch(batchId);
+    }
+    logAuditAction("Deleted Batch", "batch", batchId);
+    return true;
+  };
+
+  // Cash Shifts
+  const currentShift = useMemo(() => shifts.find((s) => s.status === "open") ?? null, [shifts]);
+
+  const openShift = async (openingFloat: number): Promise<boolean> => {
+    const storeId = getStoreId();
+    const cashierName = state.user.name || "Cashier";
+    const userId = await getUserId();
+    const newShift: CashShift = {
+      id: `shift-${Date.now()}`,
+      storeId,
+      cashierId: userId,
+      cashierName,
+      openingFloat,
+      expectedCash: openingFloat,
+      status: "open",
+      openedAt: new Date().toISOString(),
+    };
+    setShifts((prev) => [newShift, ...prev]);
+    if (storeId) {
+      void insertCashShift(storeId, newShift);
+    }
+    logAuditAction("Opened Cash Shift", "shift", newShift.id, `Float: ₱${openingFloat}`);
+    return true;
+  };
+
+  const closeShift = async (countedCash: number, notes?: string): Promise<boolean> => {
+    if (!currentShift) return false;
+    const storeId = getStoreId();
+    const shiftSales = sales.filter(
+      (s) => s.status !== "voided" && new Date(s.timestamp) >= new Date(currentShift.openedAt)
+    );
+    const cashSalesTotal = shiftSales.reduce((sum, s) => {
+      if (s.paymentMethod === "cash") return sum + s.totalAmount;
+      if (s.paymentMethod === "split") return sum + (s.splitCashAmount ?? 0);
+      return sum;
+    }, 0);
+    const expectedCash = currentShift.openingFloat + cashSalesTotal;
+    const variance = countedCash - expectedCash;
+    const closedAt = new Date().toISOString();
+
+    setShifts((prev) =>
+      prev.map((s) =>
+        s.id === currentShift.id
+          ? { ...s, countedCash, expectedCash, variance, status: "closed", notes, closedAt }
+          : s
+      )
+    );
+
+    if (storeId && !currentShift.id.startsWith("shift-")) {
+      void closeCashShift(currentShift.id, countedCash, expectedCash, variance, notes);
+    }
+    logAuditAction("Closed Cash Shift", "shift", currentShift.id, `Counted: ₱${countedCash}, Expected: ₱${expectedCash}, Variance: ₱${variance}`);
+    return true;
+  };
+
+  const summary = useMemo(
+    () => getDashboardSummary(state.products, state.movements, state.notifications),
+    [state.products, state.movements, state.notifications],
+  );
+  const categoryBreakdown = useMemo(() => getCategoryBreakdown(state.products), [state.products]);
+  const weeklyActivity = useMemo(() => getWeeklyActivitySeries(state.movements), [state.movements]);
+  const notifications = useMemo(() => getNotifications(state.notifications), [state.notifications]);
+  const recentActivity = useMemo(() => getRecentActivity(state.products, state.movements), [state.products, state.movements]);
+
+  const value: StoreContextValue = {
+      isStoreReady,
       state,
       summary,
       categoryBreakdown,
@@ -839,8 +1189,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       sales,
       customers,
       debts,
+      debtPayments,
       auditLogs,
+      batches,
+      shifts,
+      currentShift,
       processCheckout,
+      voidSale,
       loadSales,
       getProduct,
       getProductBySku,
@@ -858,33 +1213,48 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           notifications: [notification, ...current.notifications],
         }));
         if (storeId) {
-          void upsertProduct(storeId, product);
+          void queueAndSync("PRODUCT", { storeId, product, deleted: false, stockDelta: 0, createIfMissing: true });
           void insertNotification(storeId, notification);
         }
       },
 
       updateProduct: (productId, patch) => {
         const storeId = getStoreId();
+        let updatedProduct: Product | undefined;
+        let stockDelta = 0;
         mutate((current) => {
-          const products = current.products.map((product) =>
-            product.id === productId ? { ...product, ...patch, updatedAt: new Date().toISOString() } : product,
-          );
-          if (storeId) {
-            const updated = products.find((p) => p.id === productId);
-            if (updated) void upsertProduct(storeId, updated);
-          }
+          const products = current.products.map((product) => {
+            if (product.id !== productId) return product;
+            updatedProduct = { ...product, ...patch, updatedAt: new Date().toISOString() };
+            stockDelta = updatedProduct.currentStock - product.currentStock;
+            return updatedProduct;
+          });
           return { ...current, products };
         });
+        if (storeId && updatedProduct) {
+          const snap = updatedProduct;
+          void queueAndSync("PRODUCT", { storeId, product: snap, deleted: false, stockDelta, createIfMissing: false });
+        }
       },
 
       deleteProduct: (productId) => {
+        const storeId = getStoreId();
         mutate((current) => ({
           ...current,
           products: current.products.filter((product) => product.id !== productId),
         }));
-        void removeProduct(productId);
+        if (storeId) {
+          void queueAndSync("PRODUCT", { storeId, product: { id: productId }, deleted: true });
+        } else {
+          void removeProduct(productId);
+        }
         logAuditAction("Deleted Product", "product", productId);
       },
+
+      addBatch,
+      deleteBatch,
+      openShift,
+      closeShift,
 
       markNotificationRead: (notificationId) => {
         mutate((current) => ({
@@ -976,8 +1346,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       recordDebtPayment,
       updateStorePaymentQRs,
       logAuditAction,
-    };
-  }, [state, sales, customers, debts, auditLogs]);
+  };
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }

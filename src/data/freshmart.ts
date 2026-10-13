@@ -13,6 +13,10 @@ export type Product = {
   srpPrice?: number;
   expiryDate?: string;
   manufacturingDate?: string;
+  hasTingi?: boolean;
+  tingiUnit?: string;
+  tingiConversionRate?: number;
+  tingiPrice?: number;
   icon: string;
   imageUri?: string;
   createdAt: string;
@@ -56,6 +60,7 @@ export type SaleItem = {
   quantity: number;
   unitPrice: number;
   totalPrice: number;
+  unitCost?: number;
 };
 
 export type PaymentMethod = "cash" | "card" | "e_wallet" | "credit" | "split" | "other";
@@ -152,6 +157,36 @@ export type SaleTransaction = {
   splitCashAmount?: number;
   splitOtherAmount?: number;
   splitOtherMethod?: "e_wallet" | "credit";
+  status?: "completed" | "voided" | "refunded";
+  voidReason?: string;
+  voidedAt?: string;
+  voidedBy?: string;
+};
+
+export type ProductBatch = {
+  id: string;
+  storeId?: string;
+  productId: string;
+  batchNumber: string;
+  quantity: number;
+  expiryDate: string;
+  unitCost: number;
+  createdAt: string;
+};
+
+export type CashShift = {
+  id: string;
+  storeId?: string;
+  cashierId?: string;
+  cashierName: string;
+  openingFloat: number;
+  expectedCash: number;
+  countedCash?: number;
+  variance?: number;
+  status: "open" | "closed";
+  notes?: string;
+  openedAt: string;
+  closedAt?: string;
 };
 
 export type UserProfile = {
@@ -176,6 +211,8 @@ export type UserProfile = {
     biometricEnabled: boolean;
     darkMode: boolean;
     language: AppLanguage;
+    defaultCreditLimit?: number;
+    managerPin?: string;
   };
 };
 
