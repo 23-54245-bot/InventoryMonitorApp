@@ -9,7 +9,6 @@ import { ThemeProvider, useThemeContext } from "../context/theme";
 
 import { AuthProvider, useAuth } from "../context/auth";
 import { StoreProvider, useStore } from "../context/store";
-import { IsometricLogoSplash } from "../components/splash/IsometricLogoSplash";
 
 function AppShell() {
   const { theme } = useThemeContext();
@@ -153,16 +152,31 @@ function AppShell() {
         </View>
       ) : null}
       {!isReady || !fontsLoaded ? (
-        <IsometricLogoSplash
-          backgroundColor={theme.colors.surface}
-          primaryColor={theme.colors.primary}
-        />
+        <View style={[styles.brandSplash, { backgroundColor: theme.colors.surface }]}>
+          <Image source={require("../../assets/images/stocktrack-logo.png")} style={styles.brandSplashLogo} resizeMode="contain" />
+          <Text style={[styles.brandSplashName, { color: theme.colors.primary }]}>StockTrack</Text>
+        </View>
       ) : null}
     </PaperProvider>
   );
 }
 
 const styles = StyleSheet.create({
+  brandSplash: {
+    ...StyleSheet.absoluteFill,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 10,
+  },
+  brandSplashLogo: {
+    width: 132,
+    height: 132,
+    marginBottom: 18,
+  },
+  brandSplashName: {
+    fontSize: 28,
+    fontWeight: "800",
+  },
   biometricLock: {
     ...StyleSheet.absoluteFill,
     zIndex: 20,

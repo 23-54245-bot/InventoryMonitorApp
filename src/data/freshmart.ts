@@ -63,7 +63,7 @@ export type SaleItem = {
   unitCost?: number;
 };
 
-export type PaymentMethod = "cash" | "card" | "e_wallet" | "credit" | "split" | "other";
+export type PaymentMethod = "cash" | "card" | "e_wallet" | "bank" | "credit" | "split" | "other";
 
 export type CustomerRiskStatus = "good" | "warning" | "blacklisted";
 

@@ -67,7 +67,7 @@ export default function PosScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Advanced E-Wallet, Utang & Split Payment State
-  const [eWalletType, setEWalletType] = useState<"gcash" | "maya">("gcash");
+  const [eWalletType, setEWalletType] = useState<"gcash" | "maya" | "bank">("gcash");
   const [refNumber, setRefNumber] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [newCustName, setNewCustName] = useState("");
@@ -657,12 +657,13 @@ export default function PosScreen() {
               {/* Payment Methods */}
               <View style={styles.paymentMethodRow}>
                 {([
-                  { key: "cash", label: translate(language, "cash"), icon: "cash" },
-                  { key: "e_wallet", label: "GCash / Maya", icon: "cellphone-check" },
-                  { key: "credit", label: translate(language, "utang") || "Credit", icon: "book-account-outline" },
-                  { key: "split", label: translate(language, "splitPayment") || "Split", icon: "call-split" },
-                  { key: "card", label: translate(language, "card"), icon: "credit-card-outline" },
-                  { key: "other", label: translate(language, "other"), icon: "dots-horizontal-circle-outline" },
+                  { key: "cash",     label: translate(language, "cash"),                       icon: "cash" },
+                  { key: "e_wallet", label: "GCash / Maya",                                    icon: "cellphone-check" },
+                  { key: "bank",     label: "Bank / QR Ph",                                    icon: "bank-outline" },
+                  { key: "credit",   label: translate(language, "utang") || "Credit",           icon: "book-account-outline" },
+                  { key: "split",    label: translate(language, "splitPayment") || "Split",     icon: "call-split" },
+                  { key: "card",     label: translate(language, "card"),                        icon: "credit-card-outline" },
+                  { key: "other",    label: translate(language, "other"),                       icon: "dots-horizontal-circle-outline" },
                 ] as const).map((m) => (
                   <Pressable
                     key={m.key}
@@ -911,6 +912,70 @@ export default function PosScreen() {
                     </Text>
                     <TextInput
                       placeholder="e.g. 10098234857"
+                      placeholderTextColor={theme.colors.onSurfaceVariant}
+                      value={refNumber}
+                      onChangeText={setRefNumber}
+                      style={[styles.textInput, { color: theme.colors.onSurface, borderColor: theme.colors.outline, backgroundColor: theme.colors.surface }]}
+                    />
+                  </View>
+                </View>
+              ) : null}
+
+              {/* Bank / QR Ph Section */}
+              {paymentMethod === "bank" ? (
+                <View style={[styles.paymentDetailBox, { backgroundColor: theme.colors.surfaceVariant, borderColor: theme.colors.outlineVariant }]}>
+                  <View style={{ alignItems: "center", marginBottom: 12 }}>
+                    {state.user.storeQRs?.bankName ? (
+                      <Text style={{ fontSize: 13, fontWeight: "700", color: "#7C3AED", marginBottom: 6 }}>
+                        {state.user.storeQRs.bankName}
+                      </Text>
+                    ) : null}
+                    {state.user.storeQRs?.bankQrUri ? (
+                      <Image
+                        source={{ uri: state.user.storeQRs.bankQrUri }}
+                        style={{ width: 280, height: 280, borderRadius: 8, marginBottom: 8, backgroundColor: "#FFFFFF" }}
+                        contentFit="contain"
+                        cachePolicy="memory-disk"
+                      />
+                    ) : null}
+                    {state.user.storeQRs?.bankAccountName ? (
+                      <Text style={{ fontSize: 13, fontWeight: "700", color: theme.colors.onSurfaceVariant }}>
+                        {state.user.storeQRs.bankAccountName}
+                      </Text>
+                    ) : null}
+                    {state.user.storeQRs?.bankAccountNumber ? (
+                      <Text
+                        selectable
+                        style={{ fontSize: 16, fontWeight: "800", color: theme.colors.primary, marginTop: 2 }}
+                      >
+                        {state.user.storeQRs.bankAccountNumber}
+                      </Text>
+                    ) : null}
+                    {!state.user.storeQRs?.bankQrUri && !state.user.storeQRs?.bankAccountNumber ? (
+                      <View style={{ alignItems: "center", paddingVertical: 6 }}>
+                        <Text style={{ fontSize: 12, color: theme.colors.onSurfaceVariant, textAlign: "center", fontStyle: "italic", paddingHorizontal: 12, marginBottom: 8 }}>
+                          No Bank / QR Ph details uploaded yet. You can add them in Profile &gt; Store.
+                        </Text>
+                        <Button
+                          compact
+                          mode="outlined"
+                          icon="bank-outline"
+                          onPress={() => {
+                            setCheckoutVisible(false);
+                            router.push("/(tabs)/profile" as any);
+                          }}
+                        >
+                          Set up Bank QR in Profile
+                        </Button>
+                      </View>
+                    ) : null}
+                  </View>
+                  <View style={styles.formRow}>
+                    <Text style={[styles.inputLabel, { color: theme.colors.onSurface }]}>
+                      {translate(language, "paymentRefNumber") || "Payment Reference Number"} (Optional)
+                    </Text>
+                    <TextInput
+                      placeholder="e.g. REF-20241014-001"
                       placeholderTextColor={theme.colors.onSurfaceVariant}
                       value={refNumber}
                       onChangeText={setRefNumber}
