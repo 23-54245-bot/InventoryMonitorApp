@@ -134,6 +134,10 @@ export type StorePaymentQRs = {
   mayaName?: string;
   mayaNumber?: string;
   mayaQrUri?: string;
+  bankName?: string;
+  bankAccountName?: string;
+  bankAccountNumber?: string;
+  bankQrUri?: string;
 };
 
 export type SaleTransaction = {

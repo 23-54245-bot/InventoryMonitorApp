@@ -370,7 +370,11 @@ alter table public.stores
   add column if not exists gcash_qr_url text,
   add column if not exists maya_name text,
   add column if not exists maya_number text,
-  add column if not exists maya_qr_url text;
+  add column if not exists maya_qr_url text,
+  add column if not exists bank_name text,
+  add column if not exists bank_account_name text,
+  add column if not exists bank_account_number text,
+  add column if not exists bank_qr_url text;
 
 -- Payment QR images are uploaded here so device-local picker URIs do not disappear.
 insert into storage.buckets (id, name, public)

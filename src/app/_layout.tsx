@@ -10,8 +10,6 @@ import { ThemeProvider, useThemeContext } from "../context/theme";
 import { AuthProvider, useAuth } from "../context/auth";
 import { StoreProvider, useStore } from "../context/store";
 
-const BIOMETRIC_LOCK_GRACE_PERIOD_MS = 2 * 60 * 1000; // 2 minutes grace period
-
 function AppShell() {
   const { theme } = useThemeContext();
   const { isReady, session } = useAuth();
@@ -25,7 +23,6 @@ function AppShell() {
   const [biometricLoading, setBiometricLoading] = useState(false);
   const [biometricError, setBiometricError] = useState<string | null>(null);
   const previousAppState = useRef(AppState.currentState);
-  const backgroundedAt = useRef<number | null>(null);
   const biometricEnabled = Platform.OS !== "web" && Boolean(session && state.user.preferences.biometricEnabled);
 
   const unlockWithBiometrics = useCallback(async () => {
@@ -81,19 +78,9 @@ function AppShell() {
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
-      if (nextState === "background") {
-        backgroundedAt.current = Date.now();
-      } else if (
-        nextState === "active" &&
-        previousAppState.current === "background" &&
-        biometricEnabled &&
-        session
-      ) {
-        const elapsed = backgroundedAt.current ? Date.now() - backgroundedAt.current : 0;
-        if (elapsed >= BIOMETRIC_LOCK_GRACE_PERIOD_MS) {
-          setBiometricUnlocked(false);
-          setBiometricError(null);
-        }
+      if (nextState === "active" && previousAppState.current === "background" && biometricEnabled && session) {
+        setBiometricUnlocked(false);
+        setBiometricError(null);
       }
       previousAppState.current = nextState;
     });

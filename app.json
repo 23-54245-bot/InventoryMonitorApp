@@ -22,8 +22,8 @@
         "android.permission.RECORD_AUDIO"
       ],
       "adaptiveIcon": {
-        "backgroundColor": "#FFFFFF",
-        "foregroundImage": "./assets/images/stocktrack-logo.png"
+        "backgroundColor": "#F2F3F2",
+        "foregroundImage": "./assets/images/stocktrack-adaptive-icon.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.jedeann23.InventoryMonitorApp"

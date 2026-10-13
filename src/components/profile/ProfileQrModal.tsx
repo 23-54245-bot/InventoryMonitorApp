@@ -13,13 +13,21 @@ interface Props {
   mayaName: string;
   mayaNumber: string;
   mayaQrUri?: string;
+  bankName: string;
+  bankAccountName: string;
+  bankAccountNumber: string;
+  bankQrUri?: string;
   keyboardOffset: number;
   setGcashName: (v: string) => void;
   setGcashNumber: (v: string) => void;
   setMayaName: (v: string) => void;
   setMayaNumber: (v: string) => void;
+  setBankName: (v: string) => void;
+  setBankAccountName: (v: string) => void;
+  setBankAccountNumber: (v: string) => void;
   onPickGCashQR: () => void;
   onPickMayaQR: () => void;
+  onPickBankQR: () => void;
   saving: boolean;
   onSave: () => void;
   onClose: () => void;
@@ -35,13 +43,21 @@ export function ProfileQrModal({
   mayaName,
   mayaNumber,
   mayaQrUri,
+  bankName,
+  bankAccountName,
+  bankAccountNumber,
+  bankQrUri,
   keyboardOffset,
   setGcashName,
   setGcashNumber,
   setMayaName,
   setMayaNumber,
+  setBankName,
+  setBankAccountName,
+  setBankAccountNumber,
   onPickGCashQR,
   onPickMayaQR,
+  onPickBankQR,
   saving,
   onSave,
   onClose,
@@ -165,6 +181,81 @@ export function ProfileQrModal({
               ) : null}
               <Button mode="contained-tonal" icon="image-outline" compact onPress={onPickMayaQR}>
                 {mayaQrUri ? translate(language, "changeQrImage") : translate(language, "uploadMayaQr")}
+              </Button>
+            </View>
+            <Text style={[styles.hint, { color: theme.colors.onSurfaceVariant }]}>
+              {translate(language, "qrScanningHint")}
+            </Text>
+          </View>
+
+          {/* Bank / QR Ph Section */}
+          <View style={[styles.walletSection, { backgroundColor: theme.colors.surfaceVariant, borderColor: theme.colors.outline }]}>
+            <View style={styles.walletSectionHeader}>
+              <Text style={[styles.walletTitle, { color: "#7C3AED" }]}>{translate(language, "bankAccountQr")}</Text>
+              {bankQrUri ? (
+                <Chip compact style={{ backgroundColor: "#DCFCE7" }} textStyle={{ color: "#166534", fontSize: 10 }}>
+                  {translate(language, "qrAttached")}
+                </Chip>
+              ) : null}
+            </View>
+
+            {/* Quick Bank Chips */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10, flexGrow: 0 }} contentContainerStyle={{ gap: 6 }}>
+              {["BDO", "BPI", "GoTyme", "SeaBank", "UnionBank", "Maya Bank", "RCBC"].map((b) => (
+                <Chip
+                  key={b}
+                  compact
+                  selected={bankName === b}
+                  onPress={() => setBankName(b)}
+                  style={{ backgroundColor: bankName === b ? `${theme.colors.primary}20` : theme.colors.surface }}
+                  textStyle={{ fontSize: 11, fontWeight: "600" }}
+                >
+                  {b}
+                </Chip>
+              ))}
+            </ScrollView>
+
+            <TextInput
+              label={translate(language, "bankNameLabel")}
+              value={bankName}
+              onChangeText={setBankName}
+              mode="outlined"
+              style={[styles.input, { backgroundColor: theme.colors.surface }]}
+              outlineColor={theme.colors.outline}
+              activeOutlineColor={theme.colors.primary}
+              placeholder={translate(language, "bankNamePlaceholder")}
+            />
+            <TextInput
+              label={translate(language, "accountNameLabel")}
+              value={bankAccountName}
+              onChangeText={setBankAccountName}
+              mode="outlined"
+              style={[styles.input, { backgroundColor: theme.colors.surface }]}
+              outlineColor={theme.colors.outline}
+              activeOutlineColor={theme.colors.primary}
+              placeholder={translate(language, "exampleNamePlaceholder")}
+            />
+            <TextInput
+              label={translate(language, "accountNumberLabel")}
+              value={bankAccountNumber}
+              onChangeText={setBankAccountNumber}
+              mode="outlined"
+              style={[styles.input, { backgroundColor: theme.colors.surface }]}
+              outlineColor={theme.colors.outline}
+              activeOutlineColor={theme.colors.primary}
+              keyboardType="number-pad"
+              placeholder="e.g. 1234567890"
+            />
+            <View style={styles.qrRow}>
+              {bankQrUri ? (
+                <Image
+                  source={{ uri: bankQrUri }}
+                  style={styles.qrPreview}
+                  contentFit="contain"
+                />
+              ) : null}
+              <Button mode="contained-tonal" icon="image-outline" compact onPress={onPickBankQR}>
+                {bankQrUri ? translate(language, "changeQrImage") : translate(language, "uploadBankQr")}
               </Button>
             </View>
             <Text style={[styles.hint, { color: theme.colors.onSurfaceVariant }]}>

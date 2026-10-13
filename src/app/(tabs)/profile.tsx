@@ -76,6 +76,10 @@ export default function ProfileScreen() {
   const [mayaName, setMayaName] = useState(state.user.storeQRs?.mayaName ?? "");
   const [mayaNumber, setMayaNumber] = useState(state.user.storeQRs?.mayaNumber ?? "");
   const [mayaQrUri, setMayaQrUri] = useState<string | undefined>(state.user.storeQRs?.mayaQrUri);
+  const [bankName, setBankName] = useState(state.user.storeQRs?.bankName ?? "");
+  const [bankAccountName, setBankAccountName] = useState(state.user.storeQRs?.bankAccountName ?? "");
+  const [bankAccountNumber, setBankAccountNumber] = useState(state.user.storeQRs?.bankAccountNumber ?? "");
+  const [bankQrUri, setBankQrUri] = useState<string | undefined>(state.user.storeQRs?.bankQrUri);
   const [savingQRs, setSavingQRs] = useState(false);
 
   const [managerMode, setManagerMode] = useState<"add" | "edit" | null>(null);
@@ -117,6 +121,10 @@ export default function ProfileScreen() {
     setMayaName(state.user.storeQRs?.mayaName ?? "");
     setMayaNumber(state.user.storeQRs?.mayaNumber ?? "");
     setMayaQrUri(state.user.storeQRs?.mayaQrUri);
+    setBankName(state.user.storeQRs?.bankName ?? "");
+    setBankAccountName(state.user.storeQRs?.bankAccountName ?? "");
+    setBankAccountNumber(state.user.storeQRs?.bankAccountNumber ?? "");
+    setBankQrUri(state.user.storeQRs?.bankQrUri);
     setQrModal(true);
   };
 
@@ -335,6 +343,17 @@ export default function ProfileScreen() {
     }
   };
 
+  const handlePickBankQR = async () => {
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"] as any,
+      allowsEditing: true,
+      quality: 1,
+    });
+    if (!res.canceled && res.assets[0]?.uri) {
+      setBankQrUri(res.assets[0].uri);
+    }
+  };
+
   const handleSaveQRs = async () => {
     setSavingQRs(true);
     try {
@@ -345,6 +364,10 @@ export default function ProfileScreen() {
         mayaName: mayaName.trim() || undefined,
         mayaNumber: mayaNumber.trim() || undefined,
         mayaQrUri,
+        bankName: bankName.trim() || undefined,
+        bankAccountName: bankAccountName.trim() || undefined,
+        bankAccountNumber: bankAccountNumber.trim() || undefined,
+        bankQrUri,
       });
       if (!saved) {
         throw new Error("QR upload failed");
@@ -748,6 +771,29 @@ export default function ProfileScreen() {
 
               <Divider style={{ backgroundColor: theme.colors.outline }} />
 
+              <View style={styles.rowInner}>
+                <View style={styles.rowIconWrap}>
+                  <MaterialCommunityIcons name="bank-outline" size={18} color="#7C3AED" />
+                </View>
+                <View style={styles.rowTextWrap}>
+                  <Text style={[styles.rowTitle, { color: theme.colors.onSurface }]}>Bank / QR Ph</Text>
+                  <Text style={[styles.rowSubtitle, { color: theme.colors.onSurfaceVariant }]}>
+                    {state.user.storeQRs?.bankAccountNumber
+                      ? `${state.user.storeQRs?.bankName ? state.user.storeQRs.bankName + " · " : ""}${state.user.storeQRs.bankAccountNumber}`
+                      : "Not configured"}
+                  </Text>
+                </View>
+                <Chip
+                  compact
+                  style={{ backgroundColor: state.user.storeQRs?.bankAccountNumber ? `${theme.colors.secondary}18` : theme.colors.surfaceVariant }}
+                  textStyle={{ color: state.user.storeQRs?.bankAccountNumber ? theme.colors.secondary : theme.colors.onSurfaceVariant, fontSize: 11, fontWeight: "600" }}
+                >
+                  {state.user.storeQRs?.bankAccountNumber ? "Active" : "Not set"}
+                </Chip>
+              </View>
+
+              <Divider style={{ backgroundColor: theme.colors.outline }} />
+
               <TouchableRipple onPress={openQrModal} borderless>
                 <View style={styles.rowInner}>
                   <View style={styles.rowIconWrap}>
@@ -949,6 +995,14 @@ export default function ProfileScreen() {
         mayaNumber={mayaNumber}
         setMayaNumber={setMayaNumber}
         mayaQrUri={mayaQrUri}
+        bankName={bankName}
+        setBankName={setBankName}
+        bankAccountName={bankAccountName}
+        setBankAccountName={setBankAccountName}
+        bankAccountNumber={bankAccountNumber}
+        setBankAccountNumber={setBankAccountNumber}
+        bankQrUri={bankQrUri}
+        onPickBankQR={handlePickBankQR}
         keyboardOffset={keyboardOffset}
         onPickGCashQR={handlePickGCashQR}
         onPickMayaQR={handlePickMayaQR}
