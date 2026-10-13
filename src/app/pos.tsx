@@ -67,7 +67,7 @@ export default function PosScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Advanced E-Wallet, Utang & Split Payment State
-  const [eWalletType, setEWalletType] = useState<"gcash" | "maya" | "bank">("gcash");
+  const [eWalletType, setEWalletType] = useState<"gcash" | "maya">("gcash");
   const [refNumber, setRefNumber] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [newCustName, setNewCustName] = useState("");
@@ -832,7 +832,7 @@ export default function PosScreen() {
                 </View>
               ) : null}
 
-              {/* E-Wallet GCash / Maya / Bank Screen */}
+              {/* E-Wallet GCash / Maya Screen */}
               {paymentMethod === "e_wallet" ? (
                 <View style={[styles.paymentDetailBox, { backgroundColor: theme.colors.surfaceVariant, borderColor: theme.colors.outlineVariant }]}>
                   <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
@@ -852,45 +852,15 @@ export default function PosScreen() {
                     >
                       Maya
                     </Chip>
-                    <Chip
-                      selected={eWalletType === "bank"}
-                      onPress={() => setEWalletType("bank")}
-                      style={{ flex: 1 }}
-                      textStyle={{ fontWeight: "700" }}
-                    >
-                      Bank / QR Ph
-                    </Chip>
                   </View>
 
                   {(() => {
                     const isGcash = eWalletType === "gcash";
-                    const isBank = eWalletType === "bank";
-                    const qrUri = isGcash
-                      ? state.user.storeQRs?.gcashQrUri
-                      : isBank
-                      ? state.user.storeQRs?.bankQrUri
-                      : state.user.storeQRs?.mayaQrUri;
-                    const accName = isGcash
-                      ? state.user.storeQRs?.gcashName
-                      : isBank
-                      ? state.user.storeQRs?.bankAccountName
-                      : state.user.storeQRs?.mayaName;
-                    const accNumber = isGcash
-                      ? state.user.storeQRs?.gcashNumber
-                      : isBank
-                      ? state.user.storeQRs?.bankAccountNumber
-                      : state.user.storeQRs?.mayaNumber;
-                    const bankLabel = isBank && state.user.storeQRs?.bankName
-                      ? state.user.storeQRs.bankName
-                      : undefined;
-                    const emptyLabel = isGcash ? "GCash" : isBank ? "Bank / QR Ph" : "Maya";
+                    const qrUri = isGcash ? state.user.storeQRs?.gcashQrUri : state.user.storeQRs?.mayaQrUri;
+                    const accName = isGcash ? state.user.storeQRs?.gcashName : state.user.storeQRs?.mayaName;
+                    const accNumber = isGcash ? state.user.storeQRs?.gcashNumber : state.user.storeQRs?.mayaNumber;
                     return (
                       <View style={{ alignItems: "center", marginBottom: 12 }}>
-                        {bankLabel ? (
-                          <Text style={{ fontSize: 12, fontWeight: "700", color: "#7C3AED", marginBottom: 6 }}>
-                            {bankLabel}
-                          </Text>
-                        ) : null}
                         {qrUri ? (
                           <Image
                             source={{ uri: qrUri }}
@@ -915,7 +885,7 @@ export default function PosScreen() {
                         {!qrUri && !accNumber ? (
                           <View style={{ alignItems: "center", paddingVertical: 6 }}>
                             <Text style={{ fontSize: 12, color: theme.colors.onSurfaceVariant, textAlign: "center", fontStyle: "italic", paddingHorizontal: 12, marginBottom: 8 }}>
-                              No {emptyLabel} QR uploaded yet. You can upload it in Profile &gt; Store.
+                              No {isGcash ? "GCash" : "Maya"} QR uploaded yet. You can upload it in Profile &gt; Store.
                             </Text>
                             <Button
                               compact

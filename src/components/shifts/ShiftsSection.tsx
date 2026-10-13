@@ -107,6 +107,7 @@ export function ShiftsSection({ language }: ShiftsSectionProps) {
                 icon="cash-register"
                 buttonColor={theme.colors.primary}
                 onPress={() => setModalVisible(true)}
+                style={{ marginBottom: 12 }}
               >
                 Open Register / Start Shift
               </Button>
