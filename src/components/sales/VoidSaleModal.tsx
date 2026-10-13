@@ -1,21 +1,21 @@
 import { useState } from "react";
 import {
-  Alert,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  View,
+    Alert,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    View,
 } from "react-native";
 import {
-  Button,
-  Divider,
-  IconButton,
-  Surface,
-  Text,
-  TextInput,
-  useTheme,
+    Button,
+    Divider,
+    IconButton,
+    Surface,
+    Text,
+    TextInput,
+    useTheme,
 } from "react-native-paper";
 
 import { useAuth } from "../../context/auth";

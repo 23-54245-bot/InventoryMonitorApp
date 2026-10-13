@@ -1,23 +1,23 @@
 import { useState } from "react";
 import {
-  Alert,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  View,
+    Alert,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    View,
 } from "react-native";
 import {
-  Button,
-  Card,
-  Chip,
-  Divider,
-  IconButton,
-  Surface,
-  Text,
-  TextInput,
-  useTheme,
+    Button,
+    Card,
+    Chip,
+    Divider,
+    IconButton,
+    Surface,
+    Text,
+    TextInput,
+    useTheme,
 } from "react-native-paper";
 
 import { useStore } from "../../context/store";
@@ -39,7 +39,7 @@ export function AddBatchModal({
 }: AddBatchModalProps) {
   const theme = useTheme();
   const { batches, addBatch, deleteBatch } = useStore();
-
+  const [currentTime] = useState(() => Date.now());
   const [batchNumber, setBatchNumber] = useState("");
   const [quantityStr, setQuantityStr] = useState("");
   const [expiryDate, setExpiryDate] = useState(() => {
@@ -191,10 +191,10 @@ export function AddBatchModal({
             ) : (
               <View style={{ gap: 8, marginBottom: 14 }}>
                 {productBatches.map((b) => {
-                  const isExpiringSoon =
-                    new Date(b.expiryDate).getTime() - Date.now() <
-                    14 * 24 * 60 * 60 * 1000;
-                  const isExpired = new Date(b.expiryDate).getTime() < Date.now();
+                  const expiryTime = new Date(b.expiryDate).getTime();
+                  const isExpiringSoon = currentTime !== null
+                    && expiryTime - currentTime < 14 * 24 * 60 * 60 * 1000;
+                  const isExpired = currentTime !== null && expiryTime < currentTime;
 
                   return (
                     <Card
@@ -386,4 +386,3 @@ const styles = StyleSheet.create({
     gap: 12,
   },
 });
-

@@ -1,17 +1,17 @@
 import React from "react";
 import { StyleSheet, View } from "react-native";
-import Animated, { FadeIn } from "react-native-reanimated";
 import {
-  Avatar,
-  Button,
-  Card,
-  Chip,
-  Divider,
-  IconButton,
-  Text,
-  TextInput,
-  type MD3Theme,
+    Avatar,
+    Button,
+    Card,
+    Chip,
+    Divider,
+    IconButton,
+    Text,
+    TextInput,
+    type MD3Theme,
 } from "react-native-paper";
+import Animated, { FadeIn } from "react-native-reanimated";
 
 import type { Employee, EmployeeStatus, UserRole } from "../../context/auth";
 import type { AppLanguage } from "../../lib/i18n";

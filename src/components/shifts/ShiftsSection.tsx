@@ -1,19 +1,19 @@
 import { useState } from "react";
 import { StyleSheet, View } from "react-native";
 import {
-  Button,
-  Card,
-  Chip,
-  Divider,
-  Surface,
-  Text,
-  useTheme,
+    Button,
+    Card,
+    Chip,
+    Divider,
+    Surface,
+    Text,
+    useTheme,
 } from "react-native-paper";
 
 import { useAuth } from "../../context/auth";
 import { useStore } from "../../context/store";
-import { getCurrency, type CashShift } from "../../data/freshmart";
-import { translate, type AppLanguage } from "../../lib/i18n";
+import { getCurrency } from "../../data/freshmart";
+import { type AppLanguage } from "../../lib/i18n";
 import { ShiftModal } from "./ShiftModal";
 
 export interface ShiftsSectionProps {
@@ -141,7 +141,7 @@ export function ShiftsSection({ language }: ShiftsSectionProps) {
                       </Text>
                       {shift.notes ? (
                         <Text style={{ fontSize: 11, fontStyle: "italic", color: theme.colors.onSurfaceVariant }}>
-                          "{shift.notes}"
+                          &quot;{shift.notes}&quot;
                         </Text>
                       ) : null}
                     </View>
@@ -237,4 +237,3 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
 });
-

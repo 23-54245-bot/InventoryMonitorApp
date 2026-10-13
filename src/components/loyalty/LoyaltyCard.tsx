@@ -1,8 +1,8 @@
 import { StyleSheet, View } from "react-native";
-import { Button, Card, Chip, ProgressBar, Surface, Text, useTheme } from "react-native-paper";
+import { Button, Card, Chip, ProgressBar, Surface, Text } from "react-native-paper";
 
-import { type Customer, getCurrency } from "../../data/freshmart";
-import { translate, type AppLanguage } from "../../lib/i18n";
+import { getCurrency, type Customer } from "../../data/freshmart";
+import { type AppLanguage } from "../../lib/i18n";
 
 export interface LoyaltyCardProps {
   customer: Customer;
@@ -17,7 +17,6 @@ export function LoyaltyCard({
   onRedeem,
   compact = false,
 }: LoyaltyCardProps) {
-  const theme = useTheme();
   const points = customer.loyaltyPoints ?? 0;
   const progressToReward = (points % 100) / 100;
   const pointsToNextReward = 100 - (points % 100);
@@ -181,4 +180,3 @@ const styles = StyleSheet.create({
     color: "#A16207",
   },
 });
-

@@ -1,23 +1,23 @@
 import { useState } from "react";
 import {
-  Alert,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  View,
+    Alert,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    View,
 } from "react-native";
 import {
-  Button,
-  Card,
-  Divider,
-  IconButton,
-  Surface,
-  Switch,
-  Text,
-  TextInput,
-  useTheme,
+    Button,
+    Card,
+    Divider,
+    IconButton,
+    Surface,
+    Switch,
+    Text,
+    TextInput,
+    useTheme,
 } from "react-native-paper";
 
 import { useStore } from "../../context/store";
