@@ -341,7 +341,12 @@ export default function UtangScreen() {
       </View>
 
       {/* Filter Tabs */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.tabsScrollView}
+        contentContainerStyle={styles.tabsScroll}
+      >
         <Chip
           selected={activeTab === "unpaid"}
           onPress={() => setActiveTab("unpaid")}
@@ -682,9 +687,14 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: 20,
   },
+  tabsScrollView: {
+    flexGrow: 0,
+    flexShrink: 0,
+    marginBottom: 4,
+  },
   tabsScroll: {
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 6,
     gap: 8,
   },
   tabChip: {
