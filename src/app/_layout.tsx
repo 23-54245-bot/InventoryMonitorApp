@@ -3,12 +3,74 @@ import { Stack } from "expo-router";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as Updates from "expo-updates";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState, Image, Platform, StyleSheet, Text, View } from "react-native";
+import { Animated, AppState, Easing, Image, Platform, StyleSheet, Text, View } from "react-native";
 import { Button, Provider as PaperProvider, Snackbar } from "react-native-paper";
 import { ThemeProvider, useThemeContext } from "../context/theme";
 
 import { AuthProvider, useAuth } from "../context/auth";
 import { StoreProvider, useStore } from "../context/store";
+
+/** Animated splash shown while auth + fonts load */
+function AnimatedSplash({ backgroundColor, primaryColor }: { backgroundColor: string; primaryColor: string }) {
+  const logoScale = useRef(new Animated.Value(0.4)).current;
+  const logoOpacity = useRef(new Animated.Value(0)).current;
+  const textTranslateY = useRef(new Animated.Value(20)).current;
+  const textOpacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.sequence([
+      // Logo pops in
+      Animated.parallel([
+        Animated.timing(logoScale, {
+          toValue: 1,
+          duration: 420,
+          easing: Easing.out(Easing.back(1.6)),
+          useNativeDriver: true,
+        }),
+        Animated.timing(logoOpacity, {
+          toValue: 1,
+          duration: 320,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+      // Short pause then name slides up
+      Animated.delay(80),
+      Animated.parallel([
+        Animated.timing(textTranslateY, {
+          toValue: 0,
+          duration: 340,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(textOpacity, {
+          toValue: 1,
+          duration: 340,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start();
+  }, [logoOpacity, logoScale, textOpacity, textTranslateY]);
+
+  return (
+    <View style={[styles.brandSplash, { backgroundColor }]}>
+      <Animated.Image
+        source={require("../../assets/images/stocktrack-logo.png")}
+        style={[styles.brandSplashLogo, { opacity: logoOpacity, transform: [{ scale: logoScale }] }]}
+        resizeMode="contain"
+      />
+      <Animated.Text
+        style={[
+          styles.brandSplashName,
+          { color: primaryColor, opacity: textOpacity, transform: [{ translateY: textTranslateY }] },
+        ]}
+      >
+        StockTrack
+      </Animated.Text>
+    </View>
+  );
+}
 
 function AppShell() {
   const { theme } = useThemeContext();
@@ -152,10 +214,10 @@ function AppShell() {
         </View>
       ) : null}
       {!isReady || !fontsLoaded ? (
-        <View style={[styles.brandSplash, { backgroundColor: theme.colors.surface }]}>
-          <Image source={require("../../assets/images/stocktrack-logo.png")} style={styles.brandSplashLogo} resizeMode="contain" />
-          <Text style={[styles.brandSplashName, { color: theme.colors.primary }]}>StockTrack</Text>
-        </View>
+        <AnimatedSplash
+          backgroundColor={theme.colors.surface}
+          primaryColor={theme.colors.primary}
+        />
       ) : null}
     </PaperProvider>
   );
