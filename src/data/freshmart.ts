@@ -265,7 +265,7 @@ export function getExpiryStatus(product: Product) {
   if (!product.expiryDate) return { label: "No expiry date added", tone: "neutral" as const, daysLeft: null };
   const diffDays = Math.ceil((new Date(product.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
   if (diffDays < 0) return { label: "Expired", tone: "critical" as const, daysLeft: diffDays };
-  if (diffDays <= 14) return { label: `${diffDays} day${diffDays === 1 ? "" : "s"} left`, tone: "warning" as const, daysLeft: diffDays };
+  if (diffDays <= 30) return { label: `${diffDays} day${diffDays === 1 ? "" : "s"} left`, tone: "warning" as const, daysLeft: diffDays };
   return { label: `${diffDays} days left`, tone: "healthy" as const, daysLeft: diffDays };
 }
 
@@ -273,8 +273,17 @@ export function getLowStockProducts(products: Product[]) {
   return products.filter((product) => product.currentStock <= product.lowStockThreshold).sort((left, right) => left.currentStock - right.currentStock);
 }
 
-export function getExpiringProducts(products: Product[]) {
-  return products.filter((product) => product.expiryDate).sort((left, right) => new Date(left.expiryDate ?? 0).getTime() - new Date(right.expiryDate ?? 0).getTime());
+export function getExpiringProducts(products: Product[], daysThreshold?: number) {
+  return products
+    .filter((product) => {
+      if (!product.expiryDate) return false;
+      if (daysThreshold !== undefined) {
+        const diffDays = Math.ceil((new Date(product.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+        return diffDays <= daysThreshold;
+      }
+      return true;
+    })
+    .sort((left, right) => new Date(left.expiryDate ?? 0).getTime() - new Date(right.expiryDate ?? 0).getTime());
 }
 
 export function getDashboardSummary(products: Product[], movements: StockMovement[], notifications: NotificationItem[]) {

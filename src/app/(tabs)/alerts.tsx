@@ -1,11 +1,11 @@
 import type { Href } from "expo-router";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useMemo } from "react";
-import { FlatList, Pressable, StyleSheet, View } from "react-native";
-import { Button, Card, IconButton, Text, useTheme } from "react-native-paper";
+import { useMemo, useState } from "react";
+import { FlatList, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Button, Card, Chip, IconButton, Text, useTheme } from "react-native-paper";
 
 import { useStore } from "../../context/store";
-import { formatRelativeTime, getExpiringProducts, getExpiryStatus, getLowStockProducts, type Product } from "../../data/freshmart";
+import { formatRelativeTime, getExpiryStatus, getLowStockProducts, type Product } from "../../data/freshmart";
 import { translate } from "../../lib/i18n";
 
 const filters = ["All", "Unread", "Low Stock", "Expiry"] as const;
@@ -20,6 +20,7 @@ export default function AlertsScreen() {
     : "All";
   const language = state.user.preferences?.language ?? "English";
   const lowStockProducts = useMemo(() => getLowStockProducts(state.products), [state.products]);
+  const trackedExpiryProducts = useMemo(() => state.products.filter((p) => Boolean(p.expiryDate)), [state.products]);
 
   const visible = useMemo(() => {
     return notifications.filter((notification) => {
@@ -72,7 +73,7 @@ export default function AlertsScreen() {
         {activeFilter === "Low Stock" ? (
           <LowStockPanel language={language} products={lowStockProducts} onRestock={(product) => router.push({ pathname: "/stock-movement", params: { type: "in", productId: product.id } } as Href)} />
         ) : activeFilter === "Expiry" ? (
-          <ExpiryPanel language={language} products={getExpiringProducts(state.products)} onView={(product) => router.push({ pathname: "/product/[id]", params: { id: product.id } } as Href)} />
+          <ExpiryPanel language={language} products={trackedExpiryProducts} onView={(product) => router.push({ pathname: "/product/[id]", params: { id: product.id } } as Href)} />
         ) : (
           <FlatList
             data={visible}
@@ -164,54 +165,183 @@ function LowStockItem({ language, product, outOfStock = false, onRestock }: { la
 
 function ExpiryPanel({ language, products, onView }: { language: string; products: Product[]; onView: (product: Product) => void }) {
   const theme = useTheme();
-  const expired = products.filter((product) => getExpiryStatus(product).tone === "critical");
-  const urgent = products.filter((product) => getExpiryStatus(product).tone === "warning");
-  const orderedProducts = [...products].sort((a, b) => {
-    const order: Record<string, number> = { critical: 0, warning: 1, healthy: 2, neutral: 3 };
-    return (order[getExpiryStatus(a).tone] ?? 99) - (order[getExpiryStatus(b).tone] ?? 99);
-  });
+  const [subFilter, setSubFilter] = useState<"attention" | "all" | "safe">("attention");
+
+  const { expired, urgent, safe } = useMemo(() => {
+    const exp: Product[] = [];
+    const urg: Product[] = [];
+    const sf: Product[] = [];
+
+    products.forEach((product) => {
+      const status = getExpiryStatus(product);
+      if (status.tone === "critical") exp.push(product);
+      else if (status.tone === "warning") urg.push(product);
+      else if (status.tone === "healthy") sf.push(product);
+    });
+
+    const sortByDate = (a: Product, b: Product) =>
+      new Date(a.expiryDate ?? 0).getTime() - new Date(b.expiryDate ?? 0).getTime();
+
+    return {
+      expired: exp.sort(sortByDate),
+      urgent: urg.sort(sortByDate),
+      safe: sf.sort(sortByDate),
+    };
+  }, [products]);
+
+  const displayedSections = useMemo(() => {
+    const list: { title: string; subtitle?: string; color: string; items: Product[] }[] = [];
+    if (subFilter === "attention") {
+      if (expired.length > 0) {
+        list.push({ title: translate(language, "expiredLabel") || "Expired", color: theme.colors.error, items: expired });
+      }
+      if (urgent.length > 0) {
+        list.push({ title: (translate(language, "expiringSoonTitle") || "Expiring Soon") + " (≤ 30 Days)", color: theme.colors.tertiary, items: urgent });
+      }
+    } else if (subFilter === "safe") {
+      if (safe.length > 0) {
+        list.push({ title: "Good Shelf Life (> 30 Days)", subtitle: "Fresh inventory with safe expiration margin", color: "#16A34A", items: safe });
+      }
+    } else {
+      if (expired.length > 0) {
+        list.push({ title: translate(language, "expiredLabel") || "Expired", color: theme.colors.error, items: expired });
+      }
+      if (urgent.length > 0) {
+        list.push({ title: (translate(language, "expiringSoonTitle") || "Expiring Soon") + " (≤ 30 Days)", color: theme.colors.tertiary, items: urgent });
+      }
+      if (safe.length > 0) {
+        list.push({ title: "Good Shelf Life (> 30 Days)", subtitle: "Fresh inventory with safe expiration margin", color: "#16A34A", items: safe });
+      }
+    }
+    return list;
+  }, [subFilter, expired, urgent, safe, language, theme]);
+
+  const totalNeedsAttention = expired.length + urgent.length;
 
   return (
-    <FlatList
-      data={orderedProducts}
-      keyExtractor={(product) => product.id}
-      style={styles.list}
-      contentContainerStyle={styles.lowStockContent}
-      ListHeaderComponent={
-        <View>
-          <View style={styles.lowStockStats}>
-            <LowStockStat value={expired.length} label={translate(language, "expiredLabel")} color={theme.colors.error} />
-            <LowStockStat value={urgent.length} label={translate(language, "dueSoonLabel")} color={theme.colors.tertiary} />
-            <LowStockStat value={products.length} label={translate(language, "totalItemsLabel")} color={theme.colors.primary} />
+    <ScrollView style={styles.list} contentContainerStyle={styles.lowStockContent}>
+      {/* Expiry KPI summary cards */}
+      <View style={styles.lowStockStats}>
+        <LowStockStat value={expired.length} label={translate(language, "expiredLabel") || "Expired"} color={theme.colors.error} />
+        <LowStockStat value={urgent.length} label={(translate(language, "dueSoonLabel") || "Due Soon") + " (≤30d)"} color={theme.colors.tertiary} />
+        <LowStockStat value={safe.length} label="Safe (>30d)" color="#16A34A" />
+      </View>
+
+      {/* Quick filter chips */}
+      <View style={{ flexDirection: "row", gap: 8, marginBottom: 16 }}>
+        <Chip
+          selected={subFilter === "attention"}
+          onPress={() => setSubFilter("attention")}
+          style={{ flex: 1 }}
+          textStyle={{ fontSize: 11, fontWeight: "700" }}
+        >
+          Alerts ({totalNeedsAttention})
+        </Chip>
+        <Chip
+          selected={subFilter === "safe"}
+          onPress={() => setSubFilter("safe")}
+          style={{ flex: 1 }}
+          textStyle={{ fontSize: 11, fontWeight: "700" }}
+        >
+          Safe ({safe.length})
+        </Chip>
+        <Chip
+          selected={subFilter === "all"}
+          onPress={() => setSubFilter("all")}
+          style={{ flex: 1 }}
+          textStyle={{ fontSize: 11, fontWeight: "700" }}
+        >
+          All ({products.length})
+        </Chip>
+      </View>
+
+      {/* Render sections */}
+      {displayedSections.length > 0 ? (
+        displayedSections.map((section) => (
+          <View key={section.title} style={{ marginBottom: 16 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8, marginTop: 4 }}>
+              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: section.color }} />
+              <Text style={[styles.groupTitle, { color: section.color, marginBottom: 0, marginTop: 0 }]}>
+                {section.title}
+              </Text>
+              <Text style={{ fontSize: 12, fontWeight: "700", color: theme.colors.onSurfaceVariant }}>
+                ({section.items.length})
+              </Text>
+            </View>
+            {section.subtitle ? (
+              <Text style={{ fontSize: 12, color: theme.colors.onSurfaceVariant, marginBottom: 8 }}>
+                {section.subtitle}
+              </Text>
+            ) : null}
+            {section.items.map((item) => (
+              <ExpiryItem key={item.id} language={language} product={item} onView={onView} />
+            ))}
           </View>
-          {expired.length > 0 ? <Text style={[styles.groupTitle, { color: theme.colors.onSurface }]}>{translate(language, "expiredLabel")}</Text> : null}
-          {urgent.length > 0 ? <Text style={[styles.groupTitle, { color: theme.colors.onSurface }]}>{translate(language, "expiringSoonTitle")}</Text> : null}
+        ))
+      ) : (
+        <View style={{ alignItems: "center", justifyContent: "center", paddingVertical: 40 }}>
+          <IconButton icon="shield-check" iconColor="#16A34A" size={48} />
+          <Text style={{ fontSize: 16, fontWeight: "800", color: theme.colors.onSurface, marginTop: 8 }}>
+            All Tracked Stock is Fresh!
+          </Text>
+          <Text style={{ fontSize: 13, color: theme.colors.onSurfaceVariant, textAlign: "center", marginTop: 4, maxWidth: 280 }}>
+            {subFilter === "attention"
+              ? "No products are expired or expiring within 30 days."
+              : translate(language, "noExpiringProducts") || "No products found."}
+          </Text>
+          {subFilter === "attention" && safe.length > 0 ? (
+            <Button mode="outlined" style={{ marginTop: 14 }} onPress={() => setSubFilter("safe")}>
+              View Safe Items ({safe.length})
+            </Button>
+          ) : null}
         </View>
-      }
-      renderItem={({ item }) => <ExpiryItem language={language} product={item} onView={onView} />}
-      ListEmptyComponent={<Text style={styles.empty}>{translate(language, "noExpiringProducts")}</Text>}
-    />
+      )}
+    </ScrollView>
   );
 }
 
 function ExpiryItem({ language, product, onView }: { language: string; product: Product; onView: (product: Product) => void }) {
   const theme = useTheme();
   const expiry = getExpiryStatus(product);
-  const statusColor = expiry.tone === "critical" ? theme.colors.error : expiry.tone === "warning" ? theme.colors.tertiary : theme.colors.secondary;
+  const isHealthy = expiry.tone === "healthy";
+  const isWarning = expiry.tone === "warning";
+  const statusColor = isHealthy ? "#16A34A" : isWarning ? theme.colors.tertiary : theme.colors.error;
+  const statusIcon = isHealthy ? "calendar-check" : isWarning ? "calendar-alert" : "alert-circle";
+
   return (
     <Card style={[styles.lowStockCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}>
       <Card.Content>
         <View style={styles.lowStockHeader}>
-          <View style={[styles.badge, { backgroundColor: `${statusColor}18` }]}><IconButton icon="calendar-alert" iconColor={statusColor} size={21} style={styles.badgeIcon} /></View>
+          <View style={[styles.badge, { backgroundColor: `${statusColor}18` }]}>
+            <IconButton icon={statusIcon} iconColor={statusColor} size={21} style={styles.badgeIcon} />
+          </View>
           <View style={styles.lowStockIdentity}>
             <View style={styles.productTitleRow}>
-              <Text style={[styles.productTitle, { color: theme.colors.onSurface }]} numberOfLines={2} ellipsizeMode="tail">{product.name}</Text>
-              <Text style={[styles.stateBadge, { color: statusColor }]}>{expiry.label.toUpperCase()}</Text>
+              <Text style={[styles.productTitle, { color: theme.colors.onSurface }]} numberOfLines={2} ellipsizeMode="tail">
+                {product.name}
+              </Text>
+              <Text style={[styles.stateBadge, { color: statusColor }]}>
+                {expiry.label.toUpperCase()}
+              </Text>
             </View>
-            <Text style={[styles.productMeta, { color: theme.colors.onSurfaceVariant }]} numberOfLines={1} ellipsizeMode="tail">{product.sku} · {product.category}</Text>
+            <Text style={[styles.productMeta, { color: theme.colors.onSurfaceVariant }]} numberOfLines={1} ellipsizeMode="tail">
+              {product.sku} · {product.category}
+            </Text>
           </View>
         </View>
-        <View style={styles.lowStockDetails}><View><Text style={[styles.remaining, { color: theme.colors.onSurface }]}>{translate(language, "expiryDateLabel")}</Text><Text style={[styles.minimum, { color: theme.colors.onSurfaceVariant }]}>{product.expiryDate ? new Date(product.expiryDate).toLocaleDateString() : translate(language, "noExpiryDate")}</Text></View><Button compact mode="contained" buttonColor={theme.colors.primary} onPress={() => onView(product)}>{translate(language, "viewProductButton")}</Button></View>
+        <View style={styles.lowStockDetails}>
+          <View>
+            <Text style={[styles.remaining, { color: theme.colors.onSurface }]}>
+              {translate(language, "expiryDateLabel")}
+            </Text>
+            <Text style={[styles.minimum, { color: theme.colors.onSurfaceVariant }]}>
+              {product.expiryDate ? new Date(product.expiryDate).toLocaleDateString() : translate(language, "noExpiryDate")}
+            </Text>
+          </View>
+          <Button compact mode="contained" buttonColor={theme.colors.primary} onPress={() => onView(product)}>
+            {translate(language, "viewProductButton")}
+          </Button>
+        </View>
       </Card.Content>
     </Card>
   );
