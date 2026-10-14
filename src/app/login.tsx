@@ -13,7 +13,7 @@ export default function LoginScreen() {
   const router = useRouter();
   const { email: invitedEmail, invite } = useLocalSearchParams<{ email?: string; invite?: string }>();
   const theme = useTheme();
-  const { session, signIn, signUp, signInWithGoogle, recoverPassword, getHomeRoute } = useAuth();
+  const { session, signIn, signUp, signInWithGoogle, recoverPassword, verifyRecoveryOtp, getHomeRoute } = useAuth();
   const { state } = useStore();
   const language = state.user.preferences.language;
   const [email, setEmail] = useState(invite === "1" && invitedEmail ? invitedEmail : "");
@@ -21,6 +21,8 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [createAccount, setCreateAccount] = useState(invite === "1" && Boolean(invitedEmail));
   const [recovering, setRecovering] = useState(false);
+  const [recoveryStep, setRecoveryStep] = useState<"request" | "verify">("request");
+  const [recoveryToken, setRecoveryToken] = useState("");
   const [name, setName] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
@@ -75,6 +77,8 @@ export default function LoginScreen() {
   const handleBackToLogin = () => {
     setCreateAccount(false);
     setRecovering(false);
+    setRecoveryStep("request");
+    setRecoveryToken("");
     setName("");
     setPassword("");
     setConfirmPassword("");
@@ -86,6 +90,11 @@ export default function LoginScreen() {
   const handleRecoverPassword = async () => {
     setError("");
     setSuccessMessage("");
+    if (!email.trim()) {
+      setError("Please enter your email address.");
+      return;
+    }
+
     setLoginLoading(true);
     const result = await recoverPassword(email);
     setLoginLoading(false);
@@ -95,7 +104,47 @@ export default function LoginScreen() {
       return;
     }
 
+    setSuccessMessage("Reset instructions and code sent! Check your inbox.");
+    setRecoveryStep("verify");
+  };
+
+  const handleVerifyRecovery = async () => {
+    setError("");
+    setSuccessMessage("");
+
+    if (!email.trim()) {
+      setError("Please enter your email address.");
+      return;
+    }
+
+    if (!recoveryToken.trim()) {
+      setError("Please enter the 6-digit code or token from your email.");
+      return;
+    }
+
+    if (!password) {
+      setError("Please enter your new password.");
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    setLoginLoading(true);
+    const result = await verifyRecoveryOtp(email, recoveryToken, password);
+    setLoginLoading(false);
+
+    if (!result.success) {
+      setError(result.message);
+      return;
+    }
+
     setSuccessMessage(result.message);
+    setPassword("");
+    setConfirmPassword("");
+    setRecoveryToken("");
   };
 
   const handleGoogleLogin = async () => {
@@ -135,8 +184,24 @@ export default function LoginScreen() {
         <Animated.View entering={FadeInUp.duration(500).delay(120)}>
         <Card style={[styles.loginCard, Platform.OS === "web" && styles.webLoginCard, { backgroundColor: theme.colors.background, borderColor: theme.colors.background }]}> 
           <Card.Content style={Platform.OS === "web" ? styles.webCardContent : undefined}>
-            <Title style={[styles.welcome, Platform.OS === "web" && styles.webWelcome, { color: theme.colors.onSurface }]}>{createAccount ? translate(language, "createAccountButton") : recovering ? translate(language, "resetPasswordTitle") : translate(language, "welcomeBack")}</Title>
-            <Text style={[styles.subtitle, Platform.OS === "web" && styles.webSubtitle, { color: theme.colors.onSurfaceVariant }]}>{createAccount ? translate(language, "createAccountSubtitle") : recovering ? translate(language, "resetPasswordSubtitle") : translate(language, "loginSubtitle")}</Text>
+            <Title style={[styles.welcome, Platform.OS === "web" && styles.webWelcome, { color: theme.colors.onSurface }]}>
+              {createAccount
+                ? translate(language, "createAccountButton")
+                : recovering
+                ? recoveryStep === "verify"
+                  ? "Enter Verification Code"
+                  : translate(language, "resetPasswordTitle")
+                : translate(language, "welcomeBack")}
+            </Title>
+            <Text style={[styles.subtitle, Platform.OS === "web" && styles.webSubtitle, { color: theme.colors.onSurfaceVariant }]}>
+              {createAccount
+                ? translate(language, "createAccountSubtitle")
+                : recovering
+                ? recoveryStep === "verify"
+                  ? "Enter the code sent to your email and set your new password."
+                  : translate(language, "resetPasswordSubtitle")
+                : translate(language, "loginSubtitle")}
+            </Text>
 
             {createAccount ? (
               <Animated.View entering={FadeInDown.duration(300)} exiting={FadeOutUp.duration(200)}>
@@ -158,20 +223,65 @@ export default function LoginScreen() {
               style={[styles.input, { backgroundColor: theme.colors.background }]}
             />
 
-            {!recovering ? <>
-              <Text style={[styles.label, { color: theme.colors.onSurface }]}>{translate(language, "passwordLabel")}</Text>
-              <TextInput
-                mode="outlined"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!showPassword}
-                importantForAutofill="no"
-                outlineColor={theme.colors.outline}
-                activeOutlineColor={theme.colors.primary}
-                style={[styles.input, { backgroundColor: theme.colors.background }]}
-                right={<TextInput.Icon icon={showPassword ? "eye-off" : "eye"} onPress={() => setShowPassword((current) => !current)} />}
-              />
-            </> : null}
+            {recovering && recoveryStep === "verify" ? (
+              <Animated.View entering={FadeInDown.duration(300)}>
+                <Text style={[styles.label, { color: theme.colors.onSurface }]}>Verification Code / Token</Text>
+                <TextInput
+                  mode="outlined"
+                  value={recoveryToken}
+                  onChangeText={setRecoveryToken}
+                  placeholder="e.g. 123456 or token"
+                  autoCapitalize="none"
+                  importantForAutofill="no"
+                  outlineColor={theme.colors.outline}
+                  activeOutlineColor={theme.colors.primary}
+                  style={[styles.input, { backgroundColor: theme.colors.background }]}
+                />
+
+                <Text style={[styles.label, { color: theme.colors.onSurface }]}>New Password</Text>
+                <TextInput
+                  mode="outlined"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                  importantForAutofill="no"
+                  outlineColor={theme.colors.outline}
+                  activeOutlineColor={theme.colors.primary}
+                  style={[styles.input, { backgroundColor: theme.colors.background }]}
+                  right={<TextInput.Icon icon={showPassword ? "eye-off" : "eye"} onPress={() => setShowPassword((current) => !current)} />}
+                />
+
+                <Text style={[styles.label, { color: theme.colors.onSurface }]}>{translate(language, "confirmPasswordLabel") || "Confirm New Password"}</Text>
+                <TextInput
+                  mode="outlined"
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                  importantForAutofill="no"
+                  outlineColor={theme.colors.outline}
+                  activeOutlineColor={theme.colors.primary}
+                  style={[styles.input, { backgroundColor: theme.colors.background }]}
+                />
+              </Animated.View>
+            ) : null}
+
+            {!recovering ? (
+              <>
+                <Text style={[styles.label, { color: theme.colors.onSurface }]}>{translate(language, "passwordLabel")}</Text>
+                <TextInput
+                  mode="outlined"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                  importantForAutofill="no"
+                  outlineColor={theme.colors.outline}
+                  activeOutlineColor={theme.colors.primary}
+                  style={[styles.input, { backgroundColor: theme.colors.background }]}
+                  right={<TextInput.Icon icon={showPassword ? "eye-off" : "eye"} onPress={() => setShowPassword((current) => !current)} />}
+                />
+              </>
+            ) : null}
 
             {createAccount ? (
               <Animated.View entering={FadeInDown.duration(300).delay(50)} exiting={FadeOutUp.duration(200)}>
@@ -180,19 +290,61 @@ export default function LoginScreen() {
               </Animated.View>
             ) : null}
 
-            {!createAccount && !recovering ? <View style={styles.forgotRow}>
-              <Button mode="text" compact textColor={theme.colors.primary} onPress={() => { setRecovering(true); setError(""); setSuccessMessage(""); }}>
-                {translate(language, "forgotPassword")}
-              </Button>
-            </View> : null}
+            {!createAccount && !recovering ? (
+              <View style={styles.forgotRow}>
+                <Button mode="text" compact textColor={theme.colors.primary} onPress={() => { setRecovering(true); setRecoveryStep("request"); setError(""); setSuccessMessage(""); }}>
+                  {translate(language, "forgotPassword")}
+                </Button>
+              </View>
+            ) : null}
 
-              <Button mode="contained" loading={loginLoading} disabled={loginLoading || googleLoading} onPress={createAccount ? handleCreateAccount : recovering ? handleRecoverPassword : handleLogin} style={[styles.signInButton, Platform.OS === "web" && styles.webSignInButton]} contentStyle={[styles.signInContent, Platform.OS === "web" && styles.webSignInContent]}>
-              {createAccount ? translate(language, "createAccountButton") : recovering ? translate(language, "sendResetLink") : translate(language, "signInButton")}
+            {recovering ? (
+              <View style={{ alignItems: "flex-end", marginTop: 4 }}>
+                <Button
+                  mode="text"
+                  compact
+                  textColor={theme.colors.primary}
+                  onPress={() => {
+                    setError("");
+                    setSuccessMessage("");
+                    setRecoveryStep((prev) => (prev === "request" ? "verify" : "request"));
+                  }}
+                >
+                  {recoveryStep === "request" ? "Already have a code? Enter it here" : "Need to request a new code?"}
+                </Button>
+              </View>
+            ) : null}
+
+            <Button
+              mode="contained"
+              loading={loginLoading}
+              disabled={loginLoading || googleLoading}
+              onPress={
+                createAccount
+                  ? handleCreateAccount
+                  : recovering
+                  ? recoveryStep === "verify"
+                    ? handleVerifyRecovery
+                    : handleRecoverPassword
+                  : handleLogin
+              }
+              style={[styles.signInButton, Platform.OS === "web" && styles.webSignInButton]}
+              contentStyle={[styles.signInContent, Platform.OS === "web" && styles.webSignInContent]}
+            >
+              {createAccount
+                ? translate(language, "createAccountButton")
+                : recovering
+                ? recoveryStep === "verify"
+                  ? "Set New Password"
+                  : translate(language, "sendResetLink")
+                : translate(language, "signInButton")}
             </Button>
 
-            {!recovering ? <Button mode="outlined" icon="google" loading={googleLoading} disabled={googleLoading} onPress={handleGoogleLogin} style={styles.googleButton} contentStyle={[styles.signInContent, Platform.OS === "web" && styles.webSignInContent]}>
-              {translate(language, "continueWithGoogle")}
-            </Button> : null}
+            {!recovering ? (
+              <Button mode="outlined" icon="google" loading={googleLoading} disabled={googleLoading} onPress={handleGoogleLogin} style={styles.googleButton} contentStyle={[styles.signInContent, Platform.OS === "web" && styles.webSignInContent]}>
+                {translate(language, "continueWithGoogle")}
+              </Button>
+            ) : null}
 
             <View style={styles.legalNotice}>
               <Text style={{ color: theme.colors.onSurfaceVariant }}>{translate(language, "legalAgreementPrefix")}{" "}</Text>

@@ -56,10 +56,20 @@ export default function AuthCallbackScreen() {
   const exchangeStarted = useRef(false);
   const [redirectUrl, setRedirectUrl] = useState<string | null>(null);
 
+  const [isRecovery, setIsRecovery] = useState(() => {
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      try {
+        const u = new URL(window.location.href);
+        const h = new URLSearchParams(u.hash.replace(/^#/, ""));
+        return u.searchParams.get("type") === "recovery" || h.get("type") === "recovery";
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  });
+
   // ── WEB ──────────────────────────────────────────────────────────────────
-  // detectSessionInUrl handles the PKCE exchange automatically, but we also
-  // exchange the callback code directly here as a fallback in case the browser
-  // navigates back without the auth listener firing immediately.
   useEffect(() => {
     if (Platform.OS !== "web") return;
 
@@ -69,12 +79,9 @@ export default function AuthCallbackScreen() {
     const url = new URL(href);
     const query = url.searchParams;
     const hash = new URLSearchParams(url.hash.replace(/^#/, ""));
-    const callbackType = query.get("type") ?? hash.get("type");
     const errorMsg = query.get("error_description") ?? query.get("error") ?? hash.get("error_description") ?? hash.get("error");
     const code = query.get("code") ?? hash.get("code");
-
     if (errorMsg) return;
-
     if (!code || session) return;
 
     void (async () => {
@@ -84,30 +91,11 @@ export default function AuthCallbackScreen() {
           setExchangeError(error.message);
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Google sign-in could not be completed.";
+        const message = error instanceof Error ? error.message : "Authentication could not be completed.";
         setExchangeError(message);
       }
     })();
-
-    if (callbackType === "recovery") {
-      // handled by the session-check useEffect below
-    }
   }, [session]);
-
-  // After session is set (by auto-exchange on web), handle recovery redirect
-  useEffect(() => {
-    if (Platform.OS !== "web" || !session) return;
-
-    const href = typeof window !== "undefined" ? window.location.href : "";
-    if (!href) return;
-    const url = new URL(href);
-    const hash = new URLSearchParams(url.hash.replace(/^#/, ""));
-    const isRecovery = url.searchParams.get("type") === "recovery" || hash.get("type") === "recovery";
-
-    if (isRecovery) {
-      router.replace("/change-password?recovery=1");
-    }
-  }, [session, router]);
 
   // ── NATIVE ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -122,8 +110,27 @@ export default function AuthCallbackScreen() {
   useEffect(() => {
     if (Platform.OS === "web") return;
 
-    void Linking.getInitialURL().then((url) => { if (url) setRedirectUrl(url); });
-    const sub = Linking.addEventListener("url", ({ url }) => setRedirectUrl(url));
+    const inspectUrl = (rawUrl: string) => {
+      try {
+        const u = new URL(rawUrl);
+        const q = u.searchParams;
+        const h = new URLSearchParams(u.hash.replace(/^#/, ""));
+        if (q.get("type") === "recovery" || h.get("type") === "recovery") {
+          setIsRecovery(true);
+        }
+      } catch {}
+    };
+
+    void Linking.getInitialURL().then((url) => {
+      if (url) {
+        inspectUrl(url);
+        setRedirectUrl(url);
+      }
+    });
+    const sub = Linking.addEventListener("url", ({ url }) => {
+      inspectUrl(url);
+      setRedirectUrl(url);
+    });
     return () => sub.remove();
   }, []);
 
@@ -142,13 +149,17 @@ export default function AuthCallbackScreen() {
       const errorMsg = query.get("error_description") ?? query.get("error");
       const callbackType = query.get("type") ?? hash.get("type");
 
+      if (callbackType === "recovery") {
+        setIsRecovery(true);
+      }
+
       const result = errorMsg
         ? { error: new Error(errorMsg) }
         : code
         ? await supabase.auth.exchangeCodeForSession(code)
         : accessToken && refreshToken
           ? await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
-          : { error: new Error("Google returned without an authorization code or session tokens.") };
+          : { error: new Error("Authentication returned without authorization code or session tokens.") };
 
       if (result.error) {
         if (active) setExchangeError(result.error.message);
@@ -156,7 +167,6 @@ export default function AuthCallbackScreen() {
       }
 
       await refreshSession();
-      if (callbackType === "recovery") router.replace("/change-password?recovery=1");
     })();
 
     return () => { active = false; };
@@ -171,18 +181,10 @@ export default function AuthCallbackScreen() {
 
   // ── Redirect once session is ready ────────────────────────────────────────
   if (session) {
-    const href = Platform.OS === "web" && typeof window !== "undefined" ? window.location.href : "";
-    const isRecovery = href
-      ? (() => {
-          const u = new URL(href);
-          const h = new URLSearchParams(u.hash.replace(/^#/, ""));
-          return u.searchParams.get("type") === "recovery" || h.get("type") === "recovery";
-        })()
-      : false;
-
-    if (!isRecovery) {
-      return <Redirect href={getHomeRoute(session.role) as Href} />;
+    if (isRecovery) {
+      return <Redirect href="/change-password?recovery=1" />;
     }
+    return <Redirect href={getHomeRoute(session.role) as Href} />;
   }
 
   return (

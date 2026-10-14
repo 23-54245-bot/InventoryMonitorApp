@@ -66,6 +66,7 @@ type AuthContextValue = {
   refreshSession: () => Promise<void>;
   recoverPassword: (email: string) => Promise<AuthResult>;
   resetPassword: (newPassword: string) => Promise<AuthResult>;
+  verifyRecoveryOtp: (email: string, token: string, newPassword: string) => Promise<AuthResult>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<AuthResult>;
   addEmployee: (employee: Omit<Employee, "id" | "createdAt" | "status">) => Promise<EmployeeResult>;
   updateEmployee: (employeeId: string, patch: Partial<Omit<Employee, "id" | "createdAt">>) => Promise<EmployeeResult>;
@@ -660,6 +661,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       : { success: true, message: "Password updated successfully." };
   };
 
+  const verifyRecoveryOtp = async (email: string, token: string, newPassword: string): Promise<AuthResult> => {
+    if (!supabase) {
+      return { success: false, message: "Password recovery needs the Supabase configuration in .env.local." };
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const cleanToken = token.trim();
+    if (!normalizedEmail || !cleanToken) {
+      return { success: false, message: "Please provide both your email and the verification code." };
+    }
+
+    if (newPassword.length < 8 || !/[A-Za-z]/.test(newPassword) || !/\d/.test(newPassword)) {
+      return { success: false, message: "New password must be at least 8 characters and include a letter and a number." };
+    }
+
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: normalizedEmail,
+        token: cleanToken,
+        type: "recovery",
+      });
+
+      if (error) {
+        return { success: false, message: error.message };
+      }
+
+      if (!data.session) {
+        return { success: false, message: "Invalid or expired verification code. Please request a new one." };
+      }
+
+      const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+      if (updateError) {
+        return { success: false, message: updateError.message };
+      }
+
+      await refreshSession();
+      return { success: true, message: "Password updated successfully. You are now logged in." };
+    } catch (err: any) {
+      return { success: false, message: err?.message ?? "Failed to reset password." };
+    }
+  };
+
   const addEmployee = async (employee: Omit<Employee, "id" | "createdAt" | "status">): Promise<EmployeeResult> => {
     const emailNormalized = employee.email.trim().toLowerCase();
 
@@ -943,6 +986,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signOut,
         recoverPassword,
         resetPassword,
+        verifyRecoveryOtp,
         changePassword,
         addEmployee,
         updateEmployee,
