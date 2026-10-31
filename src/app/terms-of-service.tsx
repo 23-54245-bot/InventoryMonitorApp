@@ -4,7 +4,7 @@ const sections: LegalSection[] = [
   {
     heading: "1. Who may use StockTrack",
     paragraphs: [
-      "StockTrack is intended for store owners and staff whom a store owner invites or authorizes. A person creating a store account must be authorized to act for that store. Staff may use the service only for their store and within their assigned access.",
+      "StockTrack is a store-management service for organizing product inventory, stock movements and expiry information, point-of-sale transactions and receipts, supplier purchase orders, customer credit and payments, store reports, and authorized team access. It is intended for store owners and staff whom a store owner invites or authorizes. A person creating a store account must be authorized to act for that store. Staff may use the service only for their store and within their assigned access.",
     ],
   },
   {
@@ -17,7 +17,7 @@ const sections: LegalSection[] = [
   {
     heading: "3. Store records and customer information",
     paragraphs: [
-      "The store owner is responsible for the accuracy and lawfulness of information entered into StockTrack, including product, price, sales, staff, customer, and Customer Credit Ledger records.",
+      "The store owner is responsible for the accuracy and lawfulness of information entered into StockTrack, including product and price details, inventory counts and movements, supplier and purchase-order details, sales and receipt records, staff information, and customer and Customer Credit Ledger records.",
       "Before entering a customer's name, phone number, address, credit balance, or payment information, the store owner must have the right to collect and use it for the stated store purpose, provide any required privacy notice, and handle the customer's requests. The owner is responsible for ensuring that a customer's number may be used for a credit reminder.",
       "StockTrack prepares a reminder for the user to review and send through the device's messaging app or share sheet. The user chooses whether to send it and is responsible for the recipient, content, timing, and any applicable messaging rules.",
     ],
@@ -46,12 +46,12 @@ const sections: LegalSection[] = [
   {
     heading: "7. Changes and contact",
     paragraphs: [
-      "These terms may be updated as the service or legal requirements change. The effective date will be updated, and material changes will be communicated where required. The operator's legal identity must be added before publication.",
+      "These terms may be updated as the service or legal requirements change. The effective date will be updated, and material changes will be communicated where required. StockTrack is operated by Jedeann G. Cabaluna, based in Batangas City, Batangas, Philippines.",
       "Questions about these terms: inventorymonitorapp@gmail.com. These draft terms are not legal advice and should be reviewed by a qualified Philippine legal professional before publication.",
     ],
   },
 ];
 
 export default function TermsOfServiceScreen() {
-  return <LegalDocumentScreen titleKey="termsOfService" effectiveDate="[insert date]" sections={sections} />;
+  return <LegalDocumentScreen titleKey="termsOfService" effectiveDate="2026-11-10" sections={sections} />;
 }

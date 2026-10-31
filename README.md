@@ -44,6 +44,8 @@ Use these from the project root when you want to publish updates or create an An
 - Preview profile note:
   The `preview` profile in [eas.json](eas.json) is configured for `distribution: "internal"` and `buildType: "apk"`.
 
+Before building, add `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` to the matching EAS project environment in the Expo dashboard. The production profile uses the `production` environment; preview uses `preview`. These `EXPO_PUBLIC_` values are included in the client app and are not secrets. Do not copy production backend values into preview; use a separate staging Supabase project for preview builds and regression testing.
+
 ## Supabase backend
 
 The backend schema is in `supabase/schema.sql` and the Expo client is in `src/lib/supabase.ts`.

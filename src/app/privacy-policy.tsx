@@ -4,7 +4,7 @@ const sections: LegalSection[] = [
   {
     heading: "1. Operator and scope",
     paragraphs: [
-      "StockTrack is operated by [insert the operator's full legal name and business address]. This policy describes personal information processed through the StockTrack inventory, point-of-sale, team, and customer credit features.",
+      "StockTrack is operated by Jedeann G. Cabaluna, based in Batangas City, Batangas, Philippines. It is a store-management app for tracking products and stock, recording sales and customer credit payments, managing supplier purchase orders, reviewing reports and alerts, and coordinating authorized store users. This policy describes personal information processed through those features.",
       "The store owner decides why customer records are entered and used. The legal roles of the store owner and StockTrack operator under the Philippine Data Privacy Act of 2012 (Republic Act No. 10173) depend on the actual service arrangement and must be confirmed before publication.",
     ],
   },
@@ -13,7 +13,7 @@ const sections: LegalSection[] = [
     paragraphs: [
       "Account and sign-in data may include a person's name, email address, username, role, and account status. When Google sign-in is used, Supabase Auth receives basic Google identity, email, and profile information; the app uses the name and email for account display. StockTrack does not request Gmail, Drive, or other Google API access.",
       "Store and team data may include store name, email, phone, address, business hours, permit number, invited staff names and email addresses, roles, and account status.",
-      "Business records may include product names and SKUs, categories, prices and costs, quantities, expiry and manufacturing dates, batches, stock movements, sales, sale items, cashier names, payment methods and references, cash shifts, notes, notifications, and audit entries. StockTrack does not collect card numbers through its payment-method field.",
+      "Business records may include product names and SKUs, categories, prices and costs, quantities, expiry and manufacturing dates, batches, stock movements, supplier names and invoice references, purchase-order items and quantities ordered or received, sales, sale items, cashier names, payment methods and references, cash shifts, notes, notifications, and audit entries. StockTrack does not collect card numbers through its payment-method field.",
       "A store may enter customer names, phone numbers, optional addresses and notes, credit limits, credit balances, payment history and references, due dates, loyalty points, risk status, and item summaries for its Customer Credit Ledger. Free-text fields may contain other information a store chooses to enter.",
       "The app can use camera or photo-library access to scan products or select product and payment QR images. It does not intentionally collect analytics or device identifiers through app code.",
     ],
@@ -21,14 +21,14 @@ const sections: LegalSection[] = [
   {
     heading: "3. Purposes and legal basis",
     paragraphs: [
-      "Information is used to authenticate users, manage store teams, operate inventory and point-of-sale features, maintain the credit ledger, prepare reports and notifications, synchronize offline work, secure the service, and respond to support or legal requests.",
+      "Information is used to authenticate users, manage store teams, track inventory and supplier orders, record point-of-sale transactions and customer credit payments, maintain receipts and the credit ledger, prepare reports and notifications, synchronize offline work, secure the service, and respond to support or legal requests.",
       "Depending on the information and purpose, processing may rely on steps needed to provide the service, legitimate interests, consent, or a legal obligation. The responsible personal information controller must determine and document the applicable lawful basis. A store owner must give customers appropriate notice and have a lawful basis before entering customer contact or credit information.",
     ],
   },
   {
     heading: "4. Storage and security",
     paragraphs: [
-      "Account and store records are synchronized with Supabase Auth and database services. The Supabase project region is [confirm the region in Supabase Project Settings]; processing or backups may occur outside the Philippines depending on provider configuration. The public website is hosted by Vercel, which may process ordinary connection and request metadata.",
+      "Account and store records are synchronized with Supabase Auth and database services. The production Supabase project is hosted in the Southeast Asia region. Processing or backups may occur outside the Philippines depending on provider configuration. The public website is hosted by Vercel, which may process ordinary connection and request metadata.",
       "The app uses store-scoped database access rules. Members of a store can currently read and manage that store's customer and credit records; Admins and Managers have additional team and audit-log permissions. Payment QR objects are stored in a private bucket and the app uses signed image links that expire after 24 hours. Anyone who obtains a valid signed link may access that image until it expires.",
       "Some preferences, sign-in state, offline records, and pending changes are stored in the browser or on the device. Offline record caches are separated by store/account and are cleared on successful sign-out. Sign-out is blocked while that store has pending changes that failed to synchronize. Users should secure devices used to access StockTrack.",
     ],
@@ -51,12 +51,12 @@ const sections: LegalSection[] = [
   {
     heading: "7. Contact and changes",
     paragraphs: [
-      "For privacy questions or requests, contact inventorymonitorapp@gmail.com. The operator's legal identity and address must be added above before this policy is published. Material changes should be communicated to users and the effective date updated.",
+      "For privacy questions or requests, contact inventorymonitorapp@gmail.com. Material changes should be communicated to users and the effective date updated.",
       "This draft is intended to support review under the Philippine Data Privacy Act of 2012. It is not legal advice and should be reviewed by a qualified Philippine privacy professional before publication.",
     ],
   },
 ];
 
 export default function PrivacyPolicyScreen() {
-  return <LegalDocumentScreen titleKey="privacyPolicy" effectiveDate="[insert date]" sections={sections} />;
+  return <LegalDocumentScreen titleKey="privacyPolicy" effectiveDate="2026-11-10" sections={sections} />;
 }
