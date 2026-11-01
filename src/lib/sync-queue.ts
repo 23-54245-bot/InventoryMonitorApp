@@ -5,12 +5,13 @@ import {
     insertSale,
     removeProduct,
     syncProductChange,
+    upsertPurchaseOrder,
     updateDebtPayment,
     upsertCustomer,
     voidSale,
 } from "./supabase-store";
 
-export type SyncOpType = "SALE" | "MOVEMENT" | "PRODUCT" | "DEBT" | "DEBT_PAYMENT" | "VOID_SALE";
+export type SyncOpType = "SALE" | "MOVEMENT" | "PRODUCT" | "DEBT" | "DEBT_PAYMENT" | "VOID_SALE" | "PURCHASE_ORDER";
 
 export interface SyncQueueItem {
   id: string;
@@ -181,7 +182,7 @@ export async function processSyncQueue(storeId = activeStoreId): Promise<{
             }
             success = relatedWritesSucceeded;
           } else {
-            item.lastError = "insertSale returned false";
+            item.lastError = res.error ?? "The sale or its line items could not be saved.";
           }
           break;
         }
@@ -225,6 +226,12 @@ export async function processSyncQueue(storeId = activeStoreId): Promise<{
             newBalance,
             newStatus,
           );
+          break;
+        }
+
+        case "PURCHASE_ORDER": {
+          const { order } = item.payload;
+          success = await upsertPurchaseOrder(order);
           break;
         }
 

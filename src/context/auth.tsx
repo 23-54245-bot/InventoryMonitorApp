@@ -11,7 +11,7 @@ import { clearOfflineCache, getOfflineCacheScope, processSyncQueue } from "../li
 export type UserRole = "Admin" | "Manager" | "Staff";
 export type EmployeeStatus = "Active" | "Inactive";
 
-export type AppRoute = "/" | "/inventory" | "/alerts" | "/reports" | "/profile" | "/settings" | "/scan-modal" | "/product" | "/add-product" | "/stock-movement" | "/change-password" | "/pos" | "/sales-history" | "/utang";
+export type AppRoute = "/" | "/inventory" | "/alerts" | "/reports" | "/profile" | "/settings" | "/scan-modal" | "/product" | "/add-product" | "/stock-movement" | "/change-password" | "/pos" | "/sales-history" | "/utang" | "/purchase-order";
 
 export type AuthSession = {
   email: string;
@@ -86,8 +86,8 @@ const PROFILE_ROLE_CACHE_KEY_PREFIX = "stocktrack.profile-role.v1.";
 WebBrowser.maybeCompleteAuthSession();
 
 const routeAccessByRole: Record<UserRole, string[]> = {
-  Admin: ["index", "inventory", "alerts", "reports", "profile", "settings", "scan-modal", "product", "add-product", "stock-movement", "change-password", "pos", "sales-history", "utang"],
-  Manager: ["index", "inventory", "alerts", "reports", "profile", "settings", "scan-modal", "product", "add-product", "stock-movement", "change-password", "pos", "sales-history", "utang"],
+  Admin: ["index", "inventory", "alerts", "reports", "profile", "settings", "scan-modal", "product", "add-product", "stock-movement", "change-password", "pos", "sales-history", "utang", "purchase-order"],
+  Manager: ["index", "inventory", "alerts", "reports", "profile", "settings", "scan-modal", "product", "add-product", "stock-movement", "change-password", "pos", "sales-history", "utang", "purchase-order"],
   Staff: ["index", "inventory", "alerts", "profile", "change-password", "pos", "sales-history"],
 };
 
@@ -552,6 +552,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const exchange = await supabase.auth.exchangeCodeForSession(callbackCode);
       if (exchange.error || !exchange.data.user) {
+        // The native callback route can receive the same deep link while this
+        // handler is exchanging it. If that parallel exchange already created
+        // a session, treat the verifier error as a successful sign-in.
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const current = await supabase.auth.getSession();
+          if (current.data.session?.user) {
+            await refreshSession();
+            const recoveredUser = current.data.session.user;
+            return {
+              success: true,
+              message: `Signed in as ${recoveredUser.email ?? "Google User"}.`,
+            };
+          }
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
         return { success: false, message: exchange.error?.message ?? "Google login could not be completed." };
       }
 

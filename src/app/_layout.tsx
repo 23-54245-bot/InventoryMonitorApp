@@ -3,7 +3,7 @@ import { Stack } from "expo-router";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as Updates from "expo-updates";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState, Image, Platform, StyleSheet, Text, View } from "react-native";
+import { Animated, AppState, Image, Platform, StyleSheet, Text, View } from "react-native";
 import { Button, Provider as PaperProvider, Snackbar } from "react-native-paper";
 import { ThemeProvider, useThemeContext } from "../context/theme";
 
@@ -14,17 +14,17 @@ function AppShell() {
   const { theme } = useThemeContext();
   const { isReady, session } = useAuth();
   const { state, isStoreReady } = useStore();
-  const [fontsLoaded] = useFonts({
+  useFonts({
     "material-community": require("../../node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/MaterialCommunityIcons.ttf"),
   });
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [splashMinimumElapsed, setSplashMinimumElapsed] = useState(false);
   const [biometricUnlocked, setBiometricUnlocked] = useState(false);
   const [biometricLoading, setBiometricLoading] = useState(false);
   const [biometricError, setBiometricError] = useState<string | null>(null);
   const previousAppState = useRef(AppState.currentState);
   const biometricEnabled = Platform.OS !== "web" && Boolean(session && state.user.preferences.biometricEnabled);
-
   const unlockWithBiometrics = useCallback(async () => {
     if (!biometricEnabled) {
       setBiometricUnlocked(true);
@@ -142,7 +142,7 @@ function AppShell() {
       </Snackbar>
       {isReady && isStoreReady && session && biometricEnabled && !biometricUnlocked ? (
         <View style={[styles.biometricLock, { backgroundColor: theme.colors.background }]}>
-          <Image source={require("../../assets/images/stocktrack-logo.png")} style={styles.biometricLogo} resizeMode="contain" />
+          <Image source={require("../../assets/images/stocktrack-logo-transparent.png")} style={styles.biometricLogo} resizeMode="contain" />
           <Text style={[styles.biometricTitle, { color: theme.colors.onSurface }]}>Unlock StockTrack</Text>
           <Text style={[styles.biometricMessage, { color: theme.colors.onSurfaceVariant }]}>Use your device biometric to access this signed-in account.</Text>
           {biometricError ? <Text style={[styles.biometricError, { color: theme.colors.error }]}>{biometricError}</Text> : null}
@@ -151,32 +151,62 @@ function AppShell() {
           </Button>
         </View>
       ) : null}
-      {!isReady || !fontsLoaded ? (
-        <View style={[styles.brandSplash, { backgroundColor: theme.colors.surface }]}>
-          <Image source={require("../../assets/images/stocktrack-logo.png")} style={styles.brandSplashLogo} resizeMode="contain" />
-          <Text style={[styles.brandSplashName, { color: theme.colors.primary }]}>StockTrack</Text>
-        </View>
+      {!isReady || (Boolean(session) && !isStoreReady) || !splashMinimumElapsed ? (
+        <LogoSplash backgroundColor={theme.colors.surface} accentColor={theme.colors.primary} onMinimumDurationElapsed={() => setSplashMinimumElapsed(true)} />
       ) : null}
     </PaperProvider>
   );
 }
 
+function LogoSplash({ backgroundColor, accentColor, onMinimumDurationElapsed }: { backgroundColor: string; accentColor: string; onMinimumDurationElapsed: () => void }) {
+  const [opacity] = useState(() => new Animated.Value(0));
+  const [scale] = useState(() => new Animated.Value(0.86));
+  const [textOpacity] = useState(() => new Animated.Value(0));
+  const [textTranslateY] = useState(() => new Animated.Value(10));
+  const useNativeDriver = Platform.OS !== "web";
+
+  useEffect(() => {
+    const entrance = Animated.parallel([
+      Animated.timing(opacity, { toValue: 1, duration: 450, useNativeDriver }),
+      Animated.spring(scale, { toValue: 1, friction: 7, tension: 55, useNativeDriver }),
+      Animated.parallel([
+        Animated.timing(textOpacity, { toValue: 1, duration: 400, delay: 220, useNativeDriver }),
+        Animated.timing(textTranslateY, { toValue: 0, duration: 400, delay: 220, useNativeDriver }),
+      ]),
+    ]);
+    entrance.start();
+
+    const minimumDuration = setTimeout(onMinimumDurationElapsed, 2800);
+    return () => {
+      entrance.stop();
+      clearTimeout(minimumDuration);
+    };
+  }, [onMinimumDurationElapsed, opacity, scale, textOpacity, textTranslateY, useNativeDriver]);
+
+  return (
+    <View style={[styles.logoSplash, { backgroundColor }]}>
+      <Animated.Image
+        source={require("../../assets/images/stocktrack-logo-transparent.png")}
+        resizeMode="contain"
+        style={[styles.logoSplashImage, { opacity, transform: [{ scale }] }]}
+      />
+      <Animated.Text style={[styles.logoSplashTitle, { color: accentColor, opacity: textOpacity, transform: [{ translateY: textTranslateY }] }]}>
+        StockTrack
+      </Animated.Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  brandSplash: {
+  logoSplash: {
     ...StyleSheet.absoluteFill,
+    zIndex: 10,
     alignItems: "center",
     justifyContent: "center",
-    zIndex: 10,
+    overflow: "hidden",
   },
-  brandSplashLogo: {
-    width: 132,
-    height: 132,
-    marginBottom: 18,
-  },
-  brandSplashName: {
-    fontSize: 28,
-    fontWeight: "800",
-  },
+  logoSplashImage: { width: 190, height: 190 },
+  logoSplashTitle: { marginTop: 18, fontSize: 30, fontWeight: "800", letterSpacing: 0.4 },
   biometricLock: {
     ...StyleSheet.absoluteFill,
     zIndex: 20,

@@ -72,29 +72,9 @@ export default function AuthCallbackScreen() {
   // ── WEB ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (Platform.OS !== "web") return;
-
-    const href = typeof window !== "undefined" ? window.location.href : "";
-    if (!href) return;
-
-    const url = new URL(href);
-    const query = url.searchParams;
-    const hash = new URLSearchParams(url.hash.replace(/^#/, ""));
-    const errorMsg = query.get("error_description") ?? query.get("error") ?? hash.get("error_description") ?? hash.get("error");
-    const code = query.get("code") ?? hash.get("code");
-    if (errorMsg) return;
-    if (!code || session) return;
-
-    void (async () => {
-      try {
-        const { error } = await supabase.auth.exchangeCodeForSession(code);
-        if (error) {
-          setExchangeError(error.message);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Authentication could not be completed.";
-        setExchangeError(message);
-      }
-    })();
+    // `detectSessionInUrl` is enabled for the web Supabase client. It owns the
+    // PKCE exchange and fires onAuthStateChange; exchanging the same code here
+    // a second time can consume the verifier and produce a false error.
   }, [session]);
 
   // ── NATIVE ───────────────────────────────────────────────────────────────
@@ -162,6 +142,16 @@ export default function AuthCallbackScreen() {
           : { error: new Error("Authentication returned without authorization code or session tokens.") };
 
       if (result.error) {
+        // The auth context may be exchanging the same deep-link at the same
+        // time. Give that exchange a moment to finish before showing an error.
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const current = await supabase.auth.getSession();
+          if (current.data.session) {
+            await refreshSession();
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
         if (active) setExchangeError(result.error.message);
         return;
       }

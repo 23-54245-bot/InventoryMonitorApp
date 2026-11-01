@@ -7,6 +7,7 @@ import { type AppLanguage } from '../../lib/i18n';
 interface Props {
   visible: boolean;
   customers: Customer[];
+  getCustomerOutstandingDebt: (customerId: string) => number;
   isDesktop: boolean;
   language: AppLanguage;
   onClose: () => void;
@@ -16,7 +17,7 @@ interface Props {
   getCurrency: (val: number) => string;
 }
 
-export function CreditRecordModal({ visible, customers, isDesktop, language, onClose, onCreated, addCustomer, addDebt, getCurrency }: Props) {
+export function CreditRecordModal({ visible, customers, getCustomerOutstandingDebt, isDesktop, language, onClose, onCreated, addCustomer, addDebt, getCurrency }: Props) {
   const theme = useTheme();
 
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
@@ -61,12 +62,13 @@ export function CreditRecordModal({ visible, customers, isDesktop, language, onC
       if (existing) {
         customerName = existing.name;
         customerPhone = existing.phone;
+        const outstandingDebt = getCustomerOutstandingDebt(existing.id);
         // Credit limit check
-        if (existing.totalDebt + amount > existing.creditLimit) {
+        if (outstandingDebt + amount > existing.creditLimit) {
           const proceed = await new Promise<boolean>((resolve) => {
             Alert.alert(
               "Credit Limit Exceeded",
-              `${existing.name}'s credit limit is ${getCurrency(existing.creditLimit)}. Current debt is ${getCurrency(existing.totalDebt)}. Adding ${getCurrency(amount)} will exceed the limit. Proceed anyway?`,
+              `${existing.name}'s credit limit is ${getCurrency(existing.creditLimit)}. Current debt is ${getCurrency(outstandingDebt)}. Adding ${getCurrency(amount)} will exceed the limit. Proceed anyway?`,
               [
                 { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
                 { text: "Proceed", style: "destructive", onPress: () => resolve(true) },

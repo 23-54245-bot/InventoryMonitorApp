@@ -4,11 +4,11 @@
     "slug": "InventoryMonitorApp",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/stocktrack-logo.png",
+    "icon": "./assets/images/stocktrack-logo-transparent.png",
     "scheme": "inventorymonitorapp",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/images/stocktrack-logo.png",
+      "icon": "./assets/images/stocktrack-logo-transparent.png",
       "infoPlist": {
         "NSCameraUsageDescription": "Allow StockTrack to access your camera for barcode scanning"
       }
@@ -23,14 +23,14 @@
       ],
       "adaptiveIcon": {
         "backgroundColor": "#F2F3F2",
-        "foregroundImage": "./assets/images/stocktrack-adaptive-icon.png"
+        "foregroundImage": "./assets/images/stocktrack-logo-transparent.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.jedeann23.InventoryMonitorApp"
     },
     "web": {
-      "output": "static",
-      "favicon": "./assets/images/stocktrack-logo.png"
+      "output": "single",
+      "favicon": "./assets/images/stocktrack-logo-transparent.png"
     },
     "experiments": {
       "typedRoutes": true,
@@ -55,13 +55,16 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/stocktrack-logo.png",
+          "image": "./assets/images/stocktrack-logo-transparent.png",
           "resizeMode": "contain",
           "backgroundColor": "#FFFFFF"
         }
       ],
       "expo-image",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-video",
+      "expo-font",
+      "expo-status-bar"
     ],
     "extra": {
       "router": {},

@@ -1,20 +1,5 @@
 create extension if not exists "pgcrypto";
 
-create or replace function public.is_admin(uid uuid)
-returns boolean language sql security definer set search_path = public stable as $$
-  select exists (select 1 from public.profiles where id = uid and role = 'Admin');
-$$;
-
-create or replace function public.is_admin_or_manager(uid uuid)
-returns boolean language sql security definer set search_path = public stable as $$
-  select exists (select 1 from public.profiles where id = uid and role in ('Admin', 'Manager'));
-$$;
-
-create or replace function public.current_user_store_id(uid uuid)
-returns uuid language sql security definer set search_path = public stable as $$
-  select store_id from public.profiles where id = uid limit 1;
-$$;
-
 create table if not exists public.stores (
   id uuid primary key default gen_random_uuid(),
   name text not null,
@@ -53,6 +38,21 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+create or replace function public.is_admin(uid uuid)
+returns boolean language sql security definer set search_path = public stable as $$
+  select exists (select 1 from public.profiles where id = uid and role = 'Admin');
+$$;
+
+create or replace function public.is_admin_or_manager(uid uuid)
+returns boolean language sql security definer set search_path = public stable as $$
+  select exists (select 1 from public.profiles where id = uid and role in ('Admin', 'Manager'));
+$$;
+
+create or replace function public.current_user_store_id(uid uuid)
+returns uuid language sql security definer set search_path = public stable as $$
+  select store_id from public.profiles where id = uid limit 1;
+$$;
 
 create table if not exists public.products (
   id text primary key,
@@ -856,3 +856,33 @@ $$;
 
 revoke all on function public.sync_product_change(jsonb, numeric, text, boolean) from public, anon;
 grant execute on function public.sync_product_change(jsonb, numeric, text, boolean) to authenticated;
+
+-- Purchase orders
+create table if not exists public.purchase_orders (
+  id uuid primary key default gen_random_uuid(),
+  store_id uuid not null references public.stores(id) on delete cascade,
+  supplier_name text not null,
+  invoice_number text,
+  status text not null check (status in ('draft', 'ordered', 'partially_received', 'received', 'cancelled')),
+  items jsonb not null check (jsonb_typeof(items) = 'array'),
+  created_by uuid not null references auth.users(id) on delete restrict,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.purchase_orders enable row level security;
+
+drop policy if exists "Store members can view purchase orders" on public.purchase_orders;
+drop policy if exists "Store members can manage purchase orders" on public.purchase_orders;
+
+create policy "Store members can view purchase orders"
+  on public.purchase_orders for select
+  using (store_id = public.current_user_store_id(auth.uid()));
+
+create policy "Store members can manage purchase orders"
+  on public.purchase_orders for all
+  using (store_id = public.current_user_store_id(auth.uid()))
+  with check (store_id = public.current_user_store_id(auth.uid()));
+
+create index if not exists idx_purchase_orders_store_created
+  on public.purchase_orders (store_id, created_at desc);

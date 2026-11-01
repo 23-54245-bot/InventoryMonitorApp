@@ -43,7 +43,7 @@ export default function PosScreen() {
   const { session, isReady } = useAuth();
   const breakpoint = useBreakpoint();
   const isDesktop = breakpoint !== "mobile";
-  const { state, customers, addCustomer, processCheckout } = useStore();
+  const { state, customers, addCustomer, getCustomerOutstandingDebt, processCheckout } = useStore();
   const language = state.user.preferences?.language ?? "English";
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -234,11 +234,12 @@ export default function PosScreen() {
           customerNameToUse = existing.name;
           customerPhoneToUse = existing.phone;
           const portion = isCredit ? cartGrandTotal : Math.max(0, cartGrandTotal - (Number(splitCashStr) || 0));
-          if (existing.totalDebt + portion > existing.creditLimit) {
+          const outstandingDebt = getCustomerOutstandingDebt(existing.id);
+          if (outstandingDebt + portion > existing.creditLimit) {
             const proceed = await new Promise<boolean>((resolve) => {
               Alert.alert(
                 "Credit Limit Exceeded",
-                `${existing.name}'s credit limit is ${getCurrency(existing.creditLimit)}. Current debt is ${getCurrency(existing.totalDebt)}. Adding ${getCurrency(portion)} exceeds limit. Proceed anyway?`,
+                `${existing.name}'s credit limit is ${getCurrency(existing.creditLimit)}. Current debt is ${getCurrency(outstandingDebt)}. Adding ${getCurrency(portion)} exceeds limit. Proceed anyway?`,
                 [
                   { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
                   { text: "Proceed", style: "destructive", onPress: () => resolve(true) },
@@ -1009,7 +1010,7 @@ export default function PosScreen() {
                         onPress={() => setSelectedCustomerId(c.id)}
                         style={{ marginRight: 6 }}
                       >
-                        {c.name} {c.totalDebt > 0 ? `(₱${c.totalDebt.toFixed(0)})` : ""}
+                        {c.name} {getCustomerOutstandingDebt(c.id) > 0 ? `(₱${getCustomerOutstandingDebt(c.id).toFixed(0)})` : ""}
                       </Chip>
                     ))}
                   </ScrollView>
@@ -1018,7 +1019,8 @@ export default function PosScreen() {
                     (() => {
                       const cust = customers.find((c) => c.id === selectedCustomerId);
                       if (!cust) return null;
-                      const isExceeded = (cust.totalDebt + cartGrandTotal) > cust.creditLimit;
+                      const outstandingDebt = getCustomerOutstandingDebt(cust.id);
+                      const isExceeded = (outstandingDebt + cartGrandTotal) > cust.creditLimit;
                       return (
                         <View style={{ padding: 10, borderRadius: 8, backgroundColor: theme.colors.surface, marginBottom: 12 }}>
                           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
@@ -1031,7 +1033,7 @@ export default function PosScreen() {
                             Phone: {cust.phone || "None"}
                           </Text>
                           <Text style={{ fontSize: 12, color: theme.colors.onSurfaceVariant, marginTop: 2 }}>
-                            Current Debt: {getCurrency(cust.totalDebt)} / Limit: {getCurrency(cust.creditLimit)}
+                            Current Debt: {getCurrency(outstandingDebt)} / Limit: {getCurrency(cust.creditLimit)}
                           </Text>
                           {isExceeded ? (
                             <Text style={{ fontSize: 12, color: theme.colors.error, fontWeight: "700", marginTop: 4 }}>

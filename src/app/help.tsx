@@ -9,6 +9,8 @@ import { ResponsiveContainer } from "../components/responsive-container";
 import { useAuth } from "../context/auth";
 import { useStore } from "../context/store";
 import { HELP_CATEGORIES, HELP_TOPICS, type HelpTopic } from "../data/help-topics";
+import { exportOperationsManualPdf } from "../lib/operations-manual-export";
+import { showAlert } from "../lib/alert";
 import { translate } from "../lib/i18n";
 
 export default function HelpScreen() {
@@ -20,6 +22,7 @@ export default function HelpScreen() {
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedTopicId, setExpandedTopicId] = useState<string | null>("getting-started-overview");
   const [replaying, setReplaying] = useState(false);
+  const [exportingManual, setExportingManual] = useState(false);
 
   const filteredTopics = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -75,12 +78,33 @@ export default function HelpScreen() {
     }
   };
 
+  const handleManualCopy = async () => {
+    const manual = HELP_TOPICS.find((topic) => topic.id === "operations-maintenance-manual");
+    if (!manual) {
+      showAlert("Manual unavailable", "The Operations & Maintenance Manual could not be found.");
+      return;
+    }
+
+    try {
+      setExportingManual(true);
+      await exportOperationsManualPdf(manual);
+    } catch (error) {
+      showAlert(
+        "Could not create manual copy",
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      setExportingManual(false);
+    }
+  };
+
   const categoryIcons: Record<string, string> = {
     "Getting Started": "rocket-launch-outline",
     "Selling & Credit": "cash-register",
     Inventory: "package-variant-closed",
     Reports: "chart-box-outline",
     "Account & Settings": "cog-outline",
+    "Operations & Maintenance": "clipboard-text-clock-outline",
   };
 
   return (
@@ -186,10 +210,10 @@ export default function HelpScreen() {
                                 {topic.summary}
                               </Text>
                             </View>
-                            <IconButton
-                              icon={isExpanded ? "chevron-up" : "chevron-down"}
+                            <MaterialCommunityIcons
+                              name={isExpanded ? "chevron-up" : "chevron-down"}
                               size={22}
-                              iconColor={theme.colors.onSurfaceVariant}
+                              color={theme.colors.onSurfaceVariant}
                               style={styles.chevron}
                             />
                           </View>
@@ -205,11 +229,30 @@ export default function HelpScreen() {
                                     {step.stepNumber}
                                   </Text>
                                 </View>
-                                <Text style={[styles.stepInstruction, { color: theme.colors.onSurface }]}>
-                                  {step.instruction}
-                                </Text>
+                                <View style={styles.stepText}>
+                                  {step.title ? (
+                                    <Text style={[styles.stepTitle, { color: theme.colors.onSurface }]}>
+                                      {step.title}
+                                    </Text>
+                                  ) : null}
+                                  <Text style={[styles.stepInstruction, { color: theme.colors.onSurface }]}>
+                                    {step.instruction}
+                                  </Text>
+                                </View>
                               </View>
                             ))}
+                            {topic.id === "operations-maintenance-manual" ? (
+                              <Button
+                                mode="outlined"
+                                icon="file-download-outline"
+                                loading={exportingManual}
+                                disabled={exportingManual}
+                                onPress={handleManualCopy}
+                                style={styles.manualCopyButton}
+                              >
+                                Print / Save PDF Copy
+                              </Button>
+                            ) : null}
                           </View>
                         ) : null}
 
@@ -311,9 +354,11 @@ const styles = StyleSheet.create({
   },
   stepBadgeNumber: { fontSize: 12, fontWeight: "800" },
   stepInstruction: { fontSize: 14, lineHeight: 20, flex: 1 },
+  stepText: { flex: 1, gap: 4 },
+  stepTitle: { fontSize: 14, fontWeight: "800", lineHeight: 20 },
+  manualCopyButton: { alignSelf: "flex-start", marginTop: 4 },
 
   emptyWrap: { alignItems: "center", paddingVertical: 48, paddingHorizontal: 20 },
   emptyTitle: { fontSize: 16, fontWeight: "700", marginTop: 12 },
   emptySubtitle: { fontSize: 13, textAlign: "center", marginTop: 4, maxWidth: 300 },
 });
-

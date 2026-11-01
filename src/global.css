@@ -43,6 +43,37 @@ body,
   margin: 0;
 }
 
+/* Keep web scrolling available without the oversized default scrollbar. */
+html,
+body,
+#root,
+#root * {
+  scrollbar-width: none;
+  scrollbar-color: transparent transparent;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+#root::-webkit-scrollbar,
+#root *::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  background: transparent;
+}
+
+* {
+  scrollbar-width: none !important;
+}
+
+*::-webkit-scrollbar,
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-thumb {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
+}
+
 body {
   background: #dfe7ed;
 }

@@ -4,6 +4,7 @@ import { Redirect, useRouter } from "expo-router";
 import * as Sharing from "expo-sharing";
 import { useMemo, useState } from "react";
 import {
+    Alert,
     FlatList,
     Platform,
     Pressable,
@@ -128,6 +129,17 @@ export default function SalesHistoryScreen() {
     router.replace("/(tabs)");
   };
 
+  const handleRefreshSales = async () => {
+    try {
+      await loadSales();
+    } catch (error) {
+      Alert.alert(
+        "Sales could not be refreshed",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  };
+
   if (!isReady) {
     return null;
   }
@@ -144,7 +156,7 @@ export default function SalesHistoryScreen() {
           title={translate(language, "salesHistory")}
           titleStyle={[styles.headerTitle, { color: theme.colors.onPrimary }]}
         />
-        <IconButton icon="refresh" iconColor={theme.colors.onPrimary} onPress={() => void loadSales()} />
+        <IconButton icon="refresh" iconColor={theme.colors.onPrimary} onPress={() => void handleRefreshSales()} />
       </Appbar.Header>
 
       {/* Summary KPI Cards */}

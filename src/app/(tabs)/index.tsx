@@ -1,4 +1,4 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import type { Href } from "expo-router";
 import { useRouter } from "expo-router";
 import { useMemo } from "react";
@@ -11,7 +11,7 @@ import { TrendLegend, TrendLineChart } from "../../components/trend-line-chart";
 import { WalkthroughOverlay } from "../../components/walkthrough-overlay";
 import { useAuth } from "../../context/auth";
 import { useStore } from "../../context/store";
-import { formatRelativeTime, getLowStockProducts, getSafetyStockStatus } from "../../data/freshmart";
+import { formatRelativeTime, getExpiringProducts, getExpiryStatus, getLowStockProducts, getSafetyStockStatus } from "../../data/freshmart";
 import { useBreakpoint } from "../../hooks/useBreakpoint";
 import { translate } from "../../lib/i18n";
 
@@ -26,7 +26,10 @@ export default function HomeScreen() {
   const isDesktop = breakpoint === "desktop";
 
   const lowStockProducts = useMemo(() => getLowStockProducts(state.products), [state.products]);
-  const expiringProducts = useMemo(() => state.products.filter((product) => product.expiryDate).slice(0, 4), [state.products]);
+  const expiringProducts = useMemo(
+    () => getExpiringProducts(state.products, 30).filter((product) => getExpiryStatus(product).tone === "warning").slice(0, 4),
+    [state.products],
+  );
 
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
@@ -162,41 +165,49 @@ export default function HomeScreen() {
               />
             </View>
           </View>
+          <Text style={[styles.appDescription, { color: `${theme.colors.onPrimary}dd` }]}>
+            {translate(language, "homeHeroText")}
+          </Text>
         </Surface>
 
-        {/* Banners */}
-        {lowStockProducts.length > 0 ? (
-          <TouchableRipple
-            borderless
-            onPress={() => router.push({ pathname: "/alerts", params: { filter: "Low Stock" } } as Href)}
-            style={[styles.restockBanner, { backgroundColor: theme.dark ? `${theme.colors.tertiary}18` : "#fffbeb", borderColor: theme.dark ? theme.colors.tertiary : "#f8cc52" }]}
-          >
-            <View style={styles.restockContent}>
-              <IconButton icon="alert-outline" iconColor={theme.dark ? theme.colors.tertiary : "#d97706"} containerColor={theme.dark ? `${theme.colors.tertiary}26` : "#fff1c2"} size={24} />
-              <View style={styles.restockText}>
-                <Text style={[styles.restockTitle, { color: theme.dark ? theme.colors.onSurface : "#92400e" }]}>{lowStockProducts.length} {translate(language, "restockBannerTitle")}</Text>
-                <Text style={[styles.restockSubtitle, { color: theme.dark ? theme.colors.onSurfaceVariant : "#b45309" }]}>{translate(language, "restockBannerSubtitle")}</Text>
-              </View>
-              <IconButton icon="chevron-right" iconColor={theme.dark ? theme.colors.tertiary : "#d97706"} size={24} />
-            </View>
-          </TouchableRipple>
-        ) : null}
-
-        {expiringProducts.length > 0 ? (
-          <TouchableRipple
-            borderless
-            onPress={() => router.push({ pathname: "/alerts", params: { filter: "Expiry" } } as Href)}
-            style={[styles.expiryBanner, { backgroundColor: theme.dark ? `${theme.colors.tertiary}18` : "#fff7ed", borderColor: theme.dark ? theme.colors.tertiary : "#fdba74" }]}
-          >
-            <View style={styles.restockContent}>
-              <IconButton icon="calendar-alert-outline" iconColor={theme.dark ? theme.colors.tertiary : "#c2410c"} containerColor={theme.dark ? `${theme.colors.tertiary}26` : "#ffedd5"} size={24} />
-              <View style={styles.restockText}>
-                <Text style={[styles.restockTitle, { color: theme.dark ? theme.colors.onSurface : "#9a3412" }]}>{expiringProducts.length} {translate(language, "expiryBannerTitle")}</Text>
-                <Text style={[styles.restockSubtitle, { color: theme.dark ? theme.colors.onSurfaceVariant : "#c2410c" }]}>{translate(language, "expiryBannerSubtitle")}</Text>
-              </View>
-              <IconButton icon="chevron-right" iconColor={theme.dark ? theme.colors.tertiary : "#c2410c"} size={24} />
-            </View>
-          </TouchableRipple>
+        {/* Needs attention */}
+        {lowStockProducts.length > 0 || expiringProducts.length > 0 ? (
+          <Surface style={[styles.attentionCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.outline }]}>
+            <Text style={[styles.attentionTitle, { color: theme.colors.onSurface }]}>{translate(language, "alertsTitle")}</Text>
+            {lowStockProducts.length > 0 ? (
+              <TouchableRipple
+                borderless
+                onPress={() => router.push({ pathname: "/alerts", params: { filter: "Low Stock" } } as Href)}
+                style={styles.attentionRow}
+              >
+                <View style={styles.attentionRowContent}>
+                  <IconButton icon="alert-outline" iconColor={theme.colors.error} containerColor={`${theme.colors.error}18`} size={22} />
+                  <View style={styles.restockText}>
+                    <Text style={[styles.restockTitle, { color: theme.colors.onSurface }]}>{lowStockProducts.length} {translate(language, "restockBannerTitle")}</Text>
+                    <Text style={[styles.restockSubtitle, { color: theme.colors.onSurfaceVariant }]}>{translate(language, "restockBannerSubtitle")}</Text>
+                  </View>
+                  <IconButton icon="chevron-right" iconColor={theme.colors.onSurfaceVariant} size={22} />
+                </View>
+              </TouchableRipple>
+            ) : null}
+            {lowStockProducts.length > 0 && expiringProducts.length > 0 ? <View style={[styles.attentionDivider, { backgroundColor: theme.colors.outline }]} /> : null}
+            {expiringProducts.length > 0 ? (
+              <TouchableRipple
+                borderless
+                onPress={() => router.push({ pathname: "/alerts", params: { filter: "Expiry" } } as Href)}
+                style={styles.attentionRow}
+              >
+                <View style={styles.attentionRowContent}>
+                  <IconButton icon="calendar-alert-outline" iconColor={theme.colors.tertiary} containerColor={`${theme.colors.tertiary}18`} size={22} />
+                  <View style={styles.restockText}>
+                    <Text style={[styles.restockTitle, { color: theme.colors.onSurface }]}>{expiringProducts.length} {translate(language, "expiryBannerTitle")}</Text>
+                    <Text style={[styles.restockSubtitle, { color: theme.colors.onSurfaceVariant }]}>{translate(language, "expiryBannerSubtitle")}</Text>
+                  </View>
+                  <IconButton icon="chevron-right" iconColor={theme.colors.onSurfaceVariant} size={22} />
+                </View>
+              </TouchableRipple>
+            ) : null}
+          </Surface>
         ) : null}
 
         {/* Phase 2: Single inline row of typography */}
@@ -442,10 +453,13 @@ const styles = StyleSheet.create({
   storeName: { fontSize: 24, lineHeight: 28, fontWeight: "800", marginBottom: 3 },
   attentionLine: { fontSize: 13, fontWeight: "700", marginTop: 2, marginBottom: 4 },
   lastUpdated: { fontSize: 11, marginTop: 2 },
+  appDescription: { fontSize: 13, lineHeight: 19, marginTop: 12, maxWidth: 760 },
   avatar: {},
-  restockBanner: { borderRadius: 16, borderWidth: 1, marginBottom: 12 },
-  expiryBanner: { borderRadius: 16, borderWidth: 1, marginBottom: 12 },
-  restockContent: { flexDirection: "row", alignItems: "center", paddingVertical: 6, paddingHorizontal: 8 },
+  attentionCard: { borderRadius: 16, borderWidth: 1, marginBottom: 14, paddingTop: 14, paddingBottom: 4, elevation: 0 },
+  attentionTitle: { fontSize: 17, fontWeight: "800", paddingHorizontal: 16, marginBottom: 4 },
+  attentionRow: { borderRadius: 12, marginHorizontal: 4 },
+  attentionRowContent: { flexDirection: "row", alignItems: "center", paddingVertical: 2, paddingHorizontal: 4 },
+  attentionDivider: { height: 1, marginHorizontal: 16 },
   restockText: { flex: 1 },
   restockTitle: { fontSize: 15, fontWeight: "800" },
   restockSubtitle: { fontSize: 13, marginTop: 2 },

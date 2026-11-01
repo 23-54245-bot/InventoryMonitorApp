@@ -80,26 +80,29 @@ export default function AlertsScreen() {
             keyExtractor={(item) => item.id}
             style={styles.list}
             contentContainerStyle={styles.listContent}
-            renderItem={({ item }) => (
-              <View style={[styles.notificationRow, !item.isRead && { backgroundColor: `${theme.colors.primary}06` }, { borderBottomColor: theme.colors.outline }]}>
-                <View style={styles.row}>
-                  <View style={[styles.badge, { backgroundColor: colorByType[item.type].bg }]}>
-                    <IconButton icon={colorByType[item.type].icon} iconColor={colorByType[item.type].color} size={21} style={styles.badgeIcon} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.title, { color: theme.colors.onSurface }]}>{item.title}</Text>
-                    <Text style={[styles.message, { color: theme.colors.onSurfaceVariant }]}>{item.message}</Text>
-                    <View style={styles.metaRow}>
-                      <Text style={[styles.time, { color: theme.colors.onSurfaceVariant }]}>{formatRelativeTime(item.createdAt)}</Text>
-                      <View style={styles.actionsRow}>
-                        {!item.isRead ? <IconButton icon="check" iconColor={theme.colors.primary} size={18} onPress={() => markNotificationRead(item.id)} /> : null}
-                        <IconButton icon="trash-can-outline" iconColor={theme.colors.onSurfaceVariant} size={18} onPress={() => deleteNotification(item.id)} />
+            renderItem={({ item }) => {
+              const visual = colorByType[item.type] ?? colorByType.info;
+              return (
+                <View style={[styles.notificationRow, !item.isRead && { backgroundColor: `${theme.colors.primary}06` }, { borderBottomColor: theme.colors.outline }]}>
+                  <View style={styles.row}>
+                    <View style={[styles.badge, { backgroundColor: visual.bg }]}>
+                      <IconButton icon={visual.icon} iconColor={visual.color} size={21} style={styles.badgeIcon} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.title, { color: theme.colors.onSurface }]}>{item.title}</Text>
+                      <Text style={[styles.message, { color: theme.colors.onSurfaceVariant }]}>{item.message}</Text>
+                      <View style={styles.metaRow}>
+                        <Text style={[styles.time, { color: theme.colors.onSurfaceVariant }]}>{formatRelativeTime(item.createdAt)}</Text>
+                        <View style={styles.actionsRow}>
+                          {!item.isRead ? <IconButton icon="check" iconColor={theme.colors.primary} size={18} onPress={() => markNotificationRead(item.id)} /> : null}
+                          <IconButton icon="trash-can-outline" iconColor={theme.colors.onSurfaceVariant} size={18} onPress={() => deleteNotification(item.id)} />
+                        </View>
                       </View>
                     </View>
                   </View>
                 </View>
-              </View>
-            )}
+              );
+            }}
             ListEmptyComponent={<Text style={styles.empty}>{translate(language, "noNotificationsFilter")}</Text>}
           />
         )}

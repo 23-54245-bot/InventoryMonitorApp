@@ -6,7 +6,7 @@
  */
 
 import { File } from "expo-file-system";
-import type { CashShift, DebtPayment, NotificationItem, Product, ProductBatch, SaleTransaction, StockMovement, StorePaymentQRs } from "../data/freshmart";
+import type { CashShift, DebtPayment, NotificationItem, Product, ProductBatch, PurchaseOrder, PurchaseOrderStatus, SaleTransaction, StockMovement, StorePaymentQRs } from "../data/freshmart";
 import { supabase } from "./supabase";
 
 // ─── Products ────────────────────────────────────────────────────────────────
@@ -68,7 +68,8 @@ export async function fetchProducts(storeId: string): Promise<Product[]> {
     .eq("store_id", storeId)
     .order("created_at", { ascending: false });
 
-  if (error || !data) return [];
+  if (error) throw error;
+  if (!data) return [];
   return (data as Record<string, unknown>[]).map(rowToProduct);
 }
 
@@ -139,6 +140,59 @@ export async function applyStockMovement(
     p_created_at: movement.timestamp,
   });
   return error ? { success: false, error: error.message } : { success: true };
+}
+
+// ─── Purchase Orders ─────────────────────────────────────────────────────────
+
+function rowToPurchaseOrder(row: Record<string, unknown>): PurchaseOrder {
+  const items = Array.isArray(row.items) ? row.items : [];
+  return {
+    id: row.id as string,
+    storeId: row.store_id as string,
+    supplierName: row.supplier_name as string,
+    invoiceNumber: (row.invoice_number as string | null) ?? undefined,
+    status: row.status as PurchaseOrderStatus,
+    items: items.map((item) => {
+      const orderItem = item as Record<string, unknown>;
+      return {
+        productId: orderItem.productId as string,
+        productName: orderItem.productName as string,
+        sku: orderItem.sku as string,
+        quantity: Number(orderItem.quantity),
+        unitCost: Number(orderItem.unitCost),
+        receivedQuantity: Number(orderItem.receivedQuantity ?? 0),
+      };
+    }),
+    createdBy: row.created_by as string,
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+  };
+}
+
+export async function fetchPurchaseOrders(storeId: string): Promise<PurchaseOrder[]> {
+  const { data, error } = await supabase
+    .from("purchase_orders")
+    .select("*")
+    .eq("store_id", storeId)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return (data ?? []).map((row) => rowToPurchaseOrder(row as Record<string, unknown>));
+}
+
+export async function upsertPurchaseOrder(order: PurchaseOrder): Promise<boolean> {
+  const { error } = await supabase.from("purchase_orders").upsert({
+    id: order.id,
+    store_id: order.storeId,
+    supplier_name: order.supplierName,
+    invoice_number: order.invoiceNumber ?? null,
+    status: order.status,
+    items: order.items,
+    created_by: order.createdBy,
+    created_at: order.createdAt,
+    updated_at: order.updatedAt,
+  }, { onConflict: "id" });
+  return !error;
 }
 
 // ─── Notifications ────────────────────────────────────────────────────────────
@@ -221,7 +275,8 @@ export async function fetchSales(storeId: string): Promise<SaleTransaction[]> {
     .order("created_at", { ascending: false })
     .limit(100);
 
-  if (error || !data) return [];
+  if (error) throw error;
+  if (!data) return [];
 
   return (data as any[]).map((row) => ({
     id: row.id,
@@ -258,7 +313,7 @@ export async function insertSale(
   storeId: string,
   userId: string,
   sale: SaleTransaction,
-): Promise<{ success: boolean; saleId?: string }> {
+): Promise<{ success: boolean; saleId?: string; error?: string }> {
   const { data: saleRow, error: saleError } = await supabase
     .from("sales")
     .upsert({
@@ -283,7 +338,7 @@ export async function insertSale(
     .maybeSingle();
 
   if (saleError) {
-    return { success: false };
+    return { success: false, error: saleError.message };
   }
 
   const saleId = saleRow?.id ?? sale.id;
@@ -306,7 +361,7 @@ export async function insertSale(
       .from("sale_items")
       .upsert(itemsToInsert, { onConflict: "id", ignoreDuplicates: true });
     if (itemsError) {
-      return { success: false, saleId };
+      return { success: false, saleId, error: itemsError.message };
     }
   }
 
@@ -495,7 +550,30 @@ export async function updateDebtPayment(
     created_at: payment.createdAt,
   }, { onConflict: "id" });
 
-  return !paymentError;
+  if (paymentError) return false;
+
+  const { data: outstandingDebts, error: debtsError } = await supabase
+    .from("debts")
+    .select("balance, status")
+    .eq("store_id", storeId)
+    .eq("customer_id", customerId);
+
+  if (debtsError) return false;
+
+  const totalDebt = (outstandingDebts ?? []).reduce(
+    (total, outstandingDebt) =>
+      outstandingDebt.status === "paid"
+        ? total
+        : total + Math.max(0, Number(outstandingDebt.balance ?? 0)),
+    0,
+  );
+  const { error: customerError } = await supabase
+    .from("customers")
+    .update({ total_debt: totalDebt, updated_at: new Date().toISOString() })
+    .eq("store_id", storeId)
+    .eq("id", customerId);
+
+  return !customerError;
 }
 
 // ─── Audit Logs ─────────────────────────────────────────────────────────────

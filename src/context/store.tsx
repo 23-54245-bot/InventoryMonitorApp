@@ -22,6 +22,9 @@ import {
     PaymentMethod,
     Product,
     ProductBatch,
+    PurchaseOrder,
+    PurchaseOrderItem,
+    PurchaseOrderStatus,
     SaleItem,
     SaleTransaction,
     StockMovement,
@@ -40,6 +43,7 @@ import {
     fetchDebts,
     fetchMovements,
     fetchNotifications,
+    fetchPurchaseOrders,
     fetchProducts,
     fetchSales,
     insertAuditLog,
@@ -85,6 +89,8 @@ type StoreContextValue = {
   auditLogs: AuditLog[];
   batches: ProductBatch[];
   shifts: CashShift[];
+  purchaseOrders: PurchaseOrder[];
+  purchaseOrdersLoadError: string | null;
   currentShift: CashShift | null;
   processCheckout: (checkoutData: {
     items: CartItem[];
@@ -129,6 +135,14 @@ type StoreContextValue = {
   updateCustomer: (customerId: string, patch: Partial<Customer>) => Promise<boolean>;
   deleteCustomer: (customerId: string) => Promise<boolean>;
   addDebt: (debt: Omit<Debt, "id" | "amountPaid" | "balance" | "status" | "createdAt" | "updatedAt">) => Promise<Debt>;
+  getCustomerOutstandingDebt: (customerId: string) => number;
+  createPurchaseOrder: (input: {
+    supplierName: string;
+    invoiceNumber?: string;
+    items: Omit<PurchaseOrderItem, "receivedQuantity">[];
+  }) => Promise<PurchaseOrder>;
+  updatePurchaseOrderStatus: (orderId: string, status: PurchaseOrderStatus) => Promise<boolean>;
+  receivePurchaseOrderItems: (orderId: string, quantities: Record<string, number>) => Promise<boolean>;
   recordDebtPayment: (paymentData: {
     debtId: string;
     customerId: string;
@@ -214,7 +228,11 @@ function createNotification(type: NotificationItem["type"], message: string, tit
 async function queueAndSync(type: SyncOpType, payload: unknown): Promise<void> {
   try {
     await enqueueSyncOp(type, payload);
-    await processSyncQueue();
+    const storeId = payload && typeof payload === "object" && "storeId" in payload &&
+      typeof payload.storeId === "string"
+      ? payload.storeId
+      : undefined;
+    await processSyncQueue(storeId);
   } catch (error) {
     showAlert(
       "Offline changes could not be saved",
@@ -225,6 +243,14 @@ async function queueAndSync(type: SyncOpType, payload: unknown): Promise<void> {
 
 function reportSyncSetupError(error: unknown): void {
   showAlert("Offline changes could not be saved", error instanceof Error ? error.message : String(error));
+}
+
+function mergeSales(remoteSales: SaleTransaction[], cachedSales: SaleTransaction[]): SaleTransaction[] {
+  const salesById = new Map(cachedSales.map((sale) => [sale.id, sale]));
+  for (const sale of remoteSales) salesById.set(sale.id, sale);
+  return [...salesById.values()].sort(
+    (left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime(),
+  );
 }
 
 export function StoreProvider({ children }: { children: ReactNode }) {
@@ -251,6 +277,8 @@ function SessionStoreProvider({ children, session, authReady }: {
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [batches, setBatches] = useState<ProductBatch[]>([]);
   const [shifts, setShifts] = useState<CashShift[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [purchaseOrdersLoadError, setPurchaseOrdersLoadError] = useState<string | null>(null);
   const [isStoreReady, setIsStoreReady] = useState(false);
   const customersRef = useRef<Customer[]>([]);
   const loadedStorageKey = useRef<string | null>(null);
@@ -265,8 +293,12 @@ function SessionStoreProvider({ children, session, authReady }: {
 
   // ── Auto-sync on app foreground ────────────────────────────────────────────
   useEffect(() => {
-    setSyncQueueStoreId(state.user.storeId ?? "");
-    setOfflineCacheScope(state.user.storeId ? `store:${state.user.storeId}` : session?.email ? `user:${session.email.toLowerCase()}` : "");
+    const storeId = state.user.storeId ?? "";
+    setSyncQueueStoreId(storeId);
+    setOfflineCacheScope(storeId ? `store:${storeId}` : session?.email ? `user:${session.email.toLowerCase()}` : "");
+    if (storeId) {
+      void processSyncQueue(storeId).catch(reportSyncSetupError);
+    }
   }, [state.user.storeId, session?.email]);
 
   useEffect(() => {
@@ -330,6 +362,7 @@ function SessionStoreProvider({ children, session, authReady }: {
           }
         }
 
+        let purchaseOrdersLoadError: string | null = null;
         const [
           products,
           movements,
@@ -341,26 +374,41 @@ function SessionStoreProvider({ children, session, authReady }: {
           loadedAuditLogs,
           loadedBatches,
           loadedShifts,
+          loadedPurchaseOrders,
           storeRes,
         ] = accountStoreId
           ? await Promise.all([
               fetchProducts(accountStoreId),
               fetchMovements(accountStoreId),
               fetchNotifications(accountStoreId),
-              fetchSales(accountStoreId),
+              fetchSales(accountStoreId).then(async (remoteSales) =>
+                mergeSales(
+                  remoteSales,
+                  (await loadOfflineCache<SaleTransaction[]>(cacheScope, "sales")) ?? [],
+                ),
+              ),
               fetchCustomers(accountStoreId),
               fetchDebts(accountStoreId),
               fetchDebtPayments(accountStoreId),
               fetchAuditLogs(accountStoreId),
               fetchBatches(accountStoreId),
               fetchCashShifts(accountStoreId),
+              fetchPurchaseOrders(accountStoreId).catch(async (error) => {
+                const message = error instanceof Error
+                  ? error.message
+                  : error && typeof error === "object" && "message" in error && typeof error.message === "string"
+                    ? error.message
+                    : String(error);
+                purchaseOrdersLoadError = message;
+                return (await loadOfflineCache<PurchaseOrder[]>(cacheScope, "purchaseOrders")) ?? [];
+              }),
               supabase
                 .from("stores")
                 .select("name, phone, address, gcash_name, gcash_number, gcash_qr_url, maya_name, maya_number, maya_qr_url")
                 .eq("id", accountStoreId)
                 .maybeSingle(),
             ])
-          : [[], [], [], [], [], [], [], [], [], [], null] as any;
+          : [[], [], [], [], [], [], [], [], [], [], [], null] as any;
 
         const storeData = storeRes?.data;
         const [gcashQrUri, mayaQrUri] = await Promise.all([
@@ -384,6 +432,8 @@ function SessionStoreProvider({ children, session, authReady }: {
           setAuditLogs(loadedAuditLogs);
           setBatches(loadedBatches ?? []);
           setShifts(loadedShifts ?? []);
+          setPurchaseOrders(loadedPurchaseOrders ?? []);
+          setPurchaseOrdersLoadError(purchaseOrdersLoadError);
           setState(createState(
             {
               ...savedPrefs,
@@ -410,10 +460,11 @@ function SessionStoreProvider({ children, session, authReady }: {
           void saveOfflineCache(cacheScope, "customers", loadedCustomers);
           void saveOfflineCache(cacheScope, "debts", loadedDebts);
           void saveOfflineCache(cacheScope, "debtPayments", loadedDebtPayments);
+          void saveOfflineCache(cacheScope, "purchaseOrders", loadedPurchaseOrders);
         }
       } catch {
         if (active) {
-          const [cachedProducts, cachedMovements, cachedNotifications, cachedSales, cachedCustomers, cachedDebts, cachedDebtPayments] =
+          const [cachedProducts, cachedMovements, cachedNotifications, cachedSales, cachedCustomers, cachedDebts, cachedDebtPayments, cachedPurchaseOrders] =
             await Promise.all([
               loadOfflineCache<Product[]>(cacheScope, "products"),
               loadOfflineCache<StockMovement[]>(cacheScope, "movements"),
@@ -422,11 +473,13 @@ function SessionStoreProvider({ children, session, authReady }: {
               loadOfflineCache<Customer[]>(cacheScope, "customers"),
               loadOfflineCache<Debt[]>(cacheScope, "debts"),
               loadOfflineCache<DebtPayment[]>(cacheScope, "debtPayments"),
+              loadOfflineCache<PurchaseOrder[]>(cacheScope, "purchaseOrders"),
             ]);
           setSales(cachedSales ?? []);
           setCustomers(cachedCustomers ?? []);
           setDebts(cachedDebts ?? []);
           setDebtPayments(cachedDebtPayments ?? []);
+          setPurchaseOrders(cachedPurchaseOrders ?? []);
           setAuditLogs([]);
           setBatches([]);
           setShifts([]);
@@ -462,6 +515,12 @@ function SessionStoreProvider({ children, session, authReady }: {
     const cacheScope = getOfflineCacheScope();
     if (cacheScope) void saveOfflineCache(cacheScope, "debtPayments", debtPayments);
   }, [debtPayments]);
+
+  useEffect(() => {
+    if (!isStoreReady || !state.user.storeId) return;
+    const cacheScope = getOfflineCacheScope();
+    if (cacheScope) void saveOfflineCache(cacheScope, "sales", sales);
+  }, [sales, isStoreReady, state.user.storeId]);
 
   const mutate = (updater: (current: FreshMartState) => FreshMartState) => {
     setState((current) => updater(current));
@@ -554,10 +613,18 @@ function SessionStoreProvider({ children, session, authReady }: {
   const loadSales = async () => {
     const storeId = state.user.storeId;
     if (storeId) {
-      const data = await fetchSales(storeId);
-      setSales(data);
+      const [remoteSales, cachedSales] = await Promise.all([
+        fetchSales(storeId),
+        loadOfflineCache<SaleTransaction[]>(getOfflineCacheScope(), "sales"),
+      ]);
+      setSales(mergeSales(remoteSales, cachedSales ?? []));
     }
   };
+
+  const getCustomerOutstandingDebt = (customerId: string) =>
+    debts
+      .filter((debt) => debt.customerId === customerId && debt.status !== "paid")
+      .reduce((total, debt) => total + Math.max(0, debt.balance), 0);
 
   const processCheckout = async (checkoutData: {
     items: CartItem[];
@@ -745,7 +812,7 @@ function SessionStoreProvider({ children, session, authReady }: {
       setCustomers((prev) =>
         prev.map((c) =>
           c.id === customerId
-            ? { ...c, totalDebt: c.totalDebt + debtAmount, updatedAt: timestamp }
+            ? { ...c, totalDebt: getCustomerOutstandingDebt(customerId) + debtAmount, updatedAt: timestamp }
             : c
         )
       );
@@ -756,7 +823,7 @@ function SessionStoreProvider({ children, session, authReady }: {
         void queueAndSync("DEBT", {
           storeId,
           debt,
-          customer: cust ? { ...cust, totalDebt: cust.totalDebt + debtAmount } : null,
+          customer: cust ? { ...cust, totalDebt: getCustomerOutstandingDebt(customerId) + debtAmount } : null,
         });
       }
     }
@@ -961,7 +1028,7 @@ function SessionStoreProvider({ children, session, authReady }: {
     setCustomers((prev) =>
       prev.map((c) =>
         c.id === debtData.customerId
-          ? { ...c, totalDebt: c.totalDebt + debtData.amount, updatedAt: now }
+          ? { ...c, totalDebt: getCustomerOutstandingDebt(debtData.customerId) + debtData.amount, updatedAt: now }
           : c
       )
     );
@@ -970,7 +1037,7 @@ function SessionStoreProvider({ children, session, authReady }: {
       void queueAndSync("DEBT", {
         storeId,
         debt: newDebt,
-        customer: cust ? { ...cust, totalDebt: cust.totalDebt + debtData.amount } : null,
+        customer: cust ? { ...cust, totalDebt: getCustomerOutstandingDebt(debtData.customerId) + debtData.amount } : null,
       });
     }
     logAuditAction("Recorded Utang", "debt", newDebt.id, `${debtData.customerName}: ₱${debtData.amount}`);
@@ -1019,7 +1086,11 @@ function SessionStoreProvider({ children, session, authReady }: {
     setCustomers((prev) =>
       prev.map((c) =>
         c.id === paymentData.customerId
-          ? { ...c, totalDebt: Math.max(0, c.totalDebt - paymentData.amount), updatedAt: now }
+          ? {
+              ...c,
+              totalDebt: Math.max(0, getCustomerOutstandingDebt(paymentData.customerId) - paymentData.amount),
+              updatedAt: now,
+            }
           : c
       )
     );
@@ -1041,6 +1112,122 @@ function SessionStoreProvider({ children, session, authReady }: {
       "debt_payment",
       paymentData.debtId,
       `Settled ₱${paymentData.amount} via ${paymentData.paymentMethod.toUpperCase()} (Ref: ${paymentData.referenceNumber || "None"})`,
+    );
+    return true;
+  };
+
+  const persistPurchaseOrder = async (order: PurchaseOrder) => {
+    const nextOrders = [order, ...purchaseOrders.filter((item) => item.id !== order.id)];
+    setPurchaseOrders(nextOrders);
+    const cacheScope = getOfflineCacheScope();
+    if (cacheScope) void saveOfflineCache(cacheScope, "purchaseOrders", nextOrders);
+    await queueAndSync("PURCHASE_ORDER", { storeId: order.storeId, order });
+  };
+
+  const createPurchaseOrder = async (input: {
+    supplierName: string;
+    invoiceNumber?: string;
+    items: Omit<PurchaseOrderItem, "receivedQuantity">[];
+  }) => {
+    const storeId = getStoreId();
+    if (!storeId) throw new Error("A store must be selected before creating a purchase order.");
+    if (!input.supplierName.trim()) throw new Error("Enter a supplier name.");
+    if (input.items.length === 0) throw new Error("Add at least one product to the purchase order.");
+    if (input.items.some((item) =>
+      !Number.isFinite(item.quantity) || item.quantity <= 0 ||
+      !Number.isFinite(item.unitCost) || item.unitCost < 0
+    )) {
+      throw new Error("Order quantities must be positive and unit costs cannot be negative.");
+    }
+    if (new Set(input.items.map((item) => item.productId)).size !== input.items.length) {
+      throw new Error("Each product can only appear once in a purchase order.");
+    }
+    if (input.items.some((item) => !state.products.some((product) => product.id === item.productId))) {
+      throw new Error("A selected product is no longer available in inventory.");
+    }
+
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) throw sessionError;
+    const createdBy = sessionData.session?.user.id;
+    if (!createdBy) throw new Error("Your account could not be verified. Please sign in again.");
+    const now = new Date().toISOString();
+    const order: PurchaseOrder = {
+      id: Crypto.randomUUID(),
+      storeId,
+      supplierName: input.supplierName.trim(),
+      invoiceNumber: input.invoiceNumber?.trim() || undefined,
+      status: "draft",
+      items: input.items.map((item) => ({ ...item, receivedQuantity: 0 })),
+      createdBy,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await persistPurchaseOrder(order);
+    logAuditAction("Created Purchase Order", "purchase_order", order.id, order.supplierName);
+    return order;
+  };
+
+  const updatePurchaseOrderStatus = async (orderId: string, status: PurchaseOrderStatus) => {
+    const order = purchaseOrders.find((item) => item.id === orderId);
+    if (!order) return false;
+    const canMarkOrdered = status === "ordered" && order.status === "draft";
+    const canCancel = status === "cancelled" && order.status !== "received" && order.status !== "cancelled";
+    if (!canMarkOrdered && !canCancel) {
+      return false;
+    }
+    const updatedOrder = { ...order, status, updatedAt: new Date().toISOString() };
+    await persistPurchaseOrder(updatedOrder);
+    logAuditAction(
+      status === "ordered" ? "Placed Purchase Order" : "Cancelled Purchase Order",
+      "purchase_order",
+      order.id,
+      order.supplierName,
+    );
+    return true;
+  };
+
+  const receivePurchaseOrderItems = async (orderId: string, quantities: Record<string, number>) => {
+    const order = purchaseOrders.find((item) => item.id === orderId);
+    if (!order || (order.status !== "ordered" && order.status !== "partially_received")) return false;
+
+    let hasReceivedItems = false;
+    const receivedItems = order.items.map((item) => {
+      const quantity = quantities[item.productId] ?? 0;
+      const remaining = item.quantity - item.receivedQuantity;
+      if (!Number.isFinite(quantity) || quantity < 0 || quantity > remaining) {
+        throw new Error(`Received quantity for ${item.productName} must be between 0 and ${remaining}.`);
+      }
+      if (quantity > 0 && !state.products.some((product) => product.id === item.productId)) {
+        throw new Error(`${item.productName} is no longer in inventory and cannot be received.`);
+      }
+      if (quantity > 0) hasReceivedItems = true;
+      return { ...item, receivedQuantity: item.receivedQuantity + quantity };
+    });
+    if (!hasReceivedItems) throw new Error("Enter a received quantity for at least one product.");
+
+    const complete = receivedItems.every((item) => item.receivedQuantity >= item.quantity);
+    const updatedOrder: PurchaseOrder = {
+      ...order,
+      items: receivedItems,
+      status: complete ? "received" : "partially_received",
+      updatedAt: new Date().toISOString(),
+    };
+    await persistPurchaseOrder(updatedOrder);
+
+    const movementNote = [
+      `Purchase order ${order.id.slice(0, 8)}`,
+      order.supplierName,
+      order.invoiceNumber ? `Invoice ${order.invoiceNumber}` : "",
+    ].filter(Boolean).join(" · ");
+    for (const item of order.items) {
+      const quantity = quantities[item.productId] ?? 0;
+      if (quantity > 0) applyMovement(item.productId, "in", quantity, state.user.name, movementNote);
+    }
+    logAuditAction(
+      complete ? "Received Purchase Order" : "Partially Received Purchase Order",
+      "purchase_order",
+      order.id,
+      order.supplierName,
     );
     return true;
   };
@@ -1193,6 +1380,8 @@ function SessionStoreProvider({ children, session, authReady }: {
       auditLogs,
       batches,
       shifts,
+      purchaseOrders,
+      purchaseOrdersLoadError,
       currentShift,
       processCheckout,
       voidSale,
@@ -1343,6 +1532,10 @@ function SessionStoreProvider({ children, session, authReady }: {
       updateCustomer,
       deleteCustomer,
       addDebt,
+      getCustomerOutstandingDebt,
+      createPurchaseOrder,
+      updatePurchaseOrderStatus,
+      receivePurchaseOrderItems,
       recordDebtPayment,
       updateStorePaymentQRs,
       logAuditAction,

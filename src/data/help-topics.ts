@@ -1,12 +1,13 @@
 export type HelpStep = {
   stepNumber: number;
+  title?: string;
   instruction: string;
 };
 
 export type HelpTopic = {
   id: string;
   title: string;
-  category: "Getting Started" | "Selling & Credit" | "Inventory" | "Reports" | "Account & Settings";
+  category: "Getting Started" | "Selling & Credit" | "Inventory" | "Reports" | "Account & Settings" | "Operations & Maintenance";
   summary: string;
   keywords: string[];
   steps: HelpStep[];
@@ -18,6 +19,7 @@ export const HELP_CATEGORIES = [
   "Inventory",
   "Reports",
   "Account & Settings",
+  "Operations & Maintenance",
 ] as const;
 
 export const HELP_TOPICS: HelpTopic[] = [
@@ -80,15 +82,16 @@ export const HELP_TOPICS: HelpTopic[] = [
   },
   {
     id: "utang-record-payment",
-    title: "Recording Debt Payments",
+    title: "Recording a Credit Payment",
     category: "Selling & Credit",
-    summary: "Record full or partial repayments when a customer pays down their balance.",
-    keywords: ["pay", "payment", "settle", "utang", "balance", "receipt"],
+    summary: "Record full or partial payments against a customer's credit balance.",
+    keywords: ["credit payment", "pay credit", "payment", "settle", "utang", "balance", "receipt", "gcash", "maya"],
     steps: [
-      { stepNumber: 1, instruction: "Open Credit Tracker and find the customer in the list." },
-      { stepNumber: 2, instruction: "Tap Record Payment on the customer card." },
-      { stepNumber: 3, instruction: "Enter the amount the customer is paying and choose Cash or E-Wallet." },
-      { stepNumber: 4, instruction: "Tap Confirm Payment. The system will reduce their balance and mark the debt as settled if paid in full." },
+      { stepNumber: 1, instruction: "Open Credit Tracker and find the customer's unpaid or overdue credit record." },
+      { stepNumber: 2, instruction: "Tap Pay on that record." },
+      { stepNumber: 3, instruction: "Enter the amount received, or use Full Balance or Half, then select Cash, GCash, or Maya. A partial payment cannot be more than the balance due." },
+      { stepNumber: 4, instruction: "For GCash or Maya, enter the payment reference number if available. You can also add an optional note." },
+      { stepNumber: 5, instruction: "Tap Confirm Payment. The balance is reduced, and the record is marked Paid when the balance reaches zero." },
     ],
   },
 
@@ -264,16 +267,44 @@ export const HELP_TOPICS: HelpTopic[] = [
   },
   {
     id: "orders-purchase-order",
-    title: "Receiving Purchase Orders from Distributors",
+    title: "Creating and Receiving Purchase Orders",
     category: "Inventory",
-    summary: "Create delivery orders from suppliers and batch intake new stock into inventory.",
-    keywords: ["purchase order", "delivery", "distributor", "supplier", "inflow", "receive"],
+    summary: "Create supplier orders, track deliveries, and update inventory as items arrive.",
+    keywords: ["purchase order", "delivery", "distributor", "supplier", "inflow", "receive", "stock"],
     steps: [
       { stepNumber: 1, instruction: "Open Purchase Orders from the Quick Actions (+) menu or store shortcuts." },
-      { stepNumber: 2, instruction: "Enter the Supplier Name and delivery invoice reference number." },
-      { stepNumber: 3, instruction: "Search for delivered items and tap 'Add' to place them on the receiving manifest." },
-      { stepNumber: 4, instruction: "Enter the quantity delivered and purchase unit cost for each item." },
-      { stepNumber: 5, instruction: "Tap 'Confirm & Receive Into Stock' to immediately intake goods and record the delivery audit log." },
+      { stepNumber: 2, instruction: "Enter the supplier and optional invoice number, then search inventory and add the products being ordered." },
+      { stepNumber: 3, instruction: "Enter each ordered quantity and unit cost, then tap Create draft order. Draft orders do not change stock." },
+      { stepNumber: 4, instruction: "After sending the order to the supplier, tap Mark ordered." },
+      { stepNumber: 5, instruction: "When a delivery arrives, tap Receive items, enter the quantities received now, and confirm. Only received quantities are added to stock; you can receive the rest later." },
+      { stepNumber: 6, instruction: "If an order or its remaining items will not arrive, use Cancel on the draft or Cancel remaining on the ordered purchase order." },
+    ],
+  },
+  {
+    id: "sales-history-review",
+    title: "Finding and Refreshing Sales History",
+    category: "Selling & Credit",
+    summary: "Review recorded sales, filter by payment type, and reload the latest transactions.",
+    keywords: ["sales history", "sale", "missing sale", "transaction", "refresh", "receipt", "payment filter"],
+    steps: [
+      { stepNumber: 1, instruction: "Open Sales History from the Cash Register/POS screen or the Quick Actions (+) menu." },
+      { stepNumber: 2, instruction: "Choose a payment filter such as All, Cash, E-Wallet, Credit, or Split to narrow the list." },
+      { stepNumber: 3, instruction: "Tap a sale to expand its items and totals. From the expanded sale, you can print, download, or share its receipt." },
+      { stepNumber: 4, instruction: "Tap the refresh icon in the header to reload sales. If a sale or update is still missing, check the pending sync queue in Settings." },
+    ],
+  },
+  {
+    id: "settings-sync-pending",
+    title: "Retrying Pending Sync Changes",
+    category: "Account & Settings",
+    summary: "Check queued offline changes, retry syncing, and understand any failures.",
+    keywords: ["pending sync", "sync now", "offline", "not syncing", "queue", "cloud", "failed changes"],
+    steps: [
+      { stepNumber: 1, instruction: "Open Settings using the gear button on your Profile screen or the Settings shortcut in the app menu." },
+      { stepNumber: 2, instruction: "Under Alerts and Sync, find Offline Sync Queue. Tap the pending-count badge to see queued changes." },
+      { stepNumber: 3, instruction: "When your internet connection is available, tap Sync Now and wait for the result." },
+      { stepNumber: 4, instruction: "Review how many changes synced, failed, or remain. Read the failure details, fix the reported issue or restore your connection, then try Sync Now again." },
+      { stepNumber: 5, instruction: "Clear Queue permanently discards pending changes. Do not use it unless you are certain those changes are no longer needed." },
     ],
   },
   {
@@ -289,5 +320,68 @@ export const HELP_TOPICS: HelpTopic[] = [
       { stepNumber: 4, instruction: "During POS checkout, select the customer to redeem available points as an instant discount." },
     ],
   },
+  {
+    id: "operations-maintenance-manual",
+    title: "Operations & Maintenance Manual",
+    category: "Operations & Maintenance",
+    summary: "Daily store procedures, inventory controls, closing checks, sync, security, and routine maintenance.",
+    keywords: ["manual", "operations", "maintenance", "procedures", "opening", "closing", "troubleshooting", "pdf"],
+    steps: [
+      {
+        stepNumber: 1,
+        title: "Purpose and responsibilities",
+        instruction: "Use this manual as a practical guide for operating StockTrack (Inventory Monitor App) in a retail store. The app records products, stock movements, sales, customer credit, and store activity; staff remain responsible for entering accurate information and reconciling it with physical stock and cash. Store administrators should assign each user an appropriate role, train staff before they transact, and review important records regularly.",
+      },
+      {
+        stepNumber: 2,
+        title: "Opening the store",
+        instruction: "Sign in with your own account and confirm you are working in the correct store. Check the dashboard for low-stock and out-of-stock items, alerts, and recent activity. Review any pending offline sync changes in Settings before relying on records from another device. If your store uses cash shifts, open the register from Profile → Store → Cash Shifts & Drawer and enter the actual starting float.",
+      },
+      {
+        stepNumber: 3,
+        title: "Sales, payments, and customer credit",
+        instruction: "At checkout, select or scan each product, verify the item and quantity, review the cart, and select the payment method shown by the customer. Enter the amount received accurately and complete the sale before handing over the receipt. Record customer credit in Credit Tracker against the correct customer, then record each repayment against its credit record. Use Sales History to review a transaction; only authorized users should void a mistaken sale, and the reason should be recorded.",
+      },
+      {
+        stepNumber: 4,
+        title: "Receiving deliveries and controlling stock",
+        instruction: "Compare each delivery with its supplier order and invoice, count and inspect the items, and record only the quantities actually received. Purchase orders can be received in multiple deliveries; draft orders do not change stock. For deliveries without a purchase order, use Stock In and record supplier or invoice details when available. Record damaged, expired, missing, or corrected quantities with Stock Out and the truthful reason—do not use an adjustment to hide a discrepancy. Keep batch and expiry details current for products that use FEFO tracking.",
+      },
+      {
+        stepNumber: 5,
+        title: "Closing and daily reconciliation",
+        instruction: "Review Sales History and compare recorded transactions with cash and e-wallet receipts. If a cash shift is open, count the physical drawer and use End Shift & Count Drawer; investigate any shortage or overage instead of changing figures to force a match. Review stock movements, alerts, and any unusual changes. When the device has been offline, restore connectivity and confirm pending changes have synced before ending the day.",
+      },
+      {
+        stepNumber: 6,
+        title: "Reports and record keeping",
+        instruction: "Use Reports to review weekly or monthly activity and inventory turnover. Export inventory or activity logs from Reports or Profile as CSV, Word, or a printable report where offered. Store exported records in a business-approved, access-controlled location. Exports are useful snapshots, but they are not a complete system backup and do not replace required accounting or statutory records.",
+      },
+      {
+        stepNumber: 7,
+        title: "Offline use and synchronization",
+        instruction: "Some work can be queued while a device is offline, but other devices may not show those changes until synchronization succeeds. Reconnect to a reliable network, open Settings → Alerts and Sync → Offline Sync Queue, tap Sync Now, and review the synced, failed, and remaining counts. Resolve the specific failure and retry. Never clear the queue unless you have confirmed the pending changes are no longer needed; clearing it permanently discards them.",
+      },
+      {
+        stepNumber: 8,
+        title: "Routine maintenance",
+        instruction: "Daily: review stock alerts, pending purchase orders, expiry warnings, and sync status. Weekly: verify fast-moving and high-value items against physical counts, check upcoming expiry dates, and review unusual stock adjustments. Monthly and whenever costs change: review product names, barcodes, categories, cost and selling prices, low-stock thresholds, and staff access. Remove or update obsolete catalog entries only after checking their transaction history. Keep devices charged, operating systems and the installed app reasonably up to date, and exported business records protected.",
+      },
+      {
+        stepNumber: 9,
+        title: "Account and information security",
+        instruction: "Use individual accounts; do not share passwords or leave a signed-in device unattended. Give staff only the access they need and remove access when a worker leaves. Use a device screen lock and protect exported reports, customer details, and receipts from unauthorized access. Never put passwords, verification codes, or backend service keys into support messages. Contact the store administrator if your access or store assignment looks wrong.",
+      },
+      {
+        stepNumber: 10,
+        title: "Troubleshooting and support",
+        instruction: "For a missing or unexpected transaction, check the selected store, Sales History, stock activity, and the pending sync queue before entering it again; repeating an operation can create duplicates. For an incorrect stock count, compare the product's recent sales and stock movements with the physical count, then make a clearly described correction using the appropriate stock action. For barcode problems, confirm the product barcode and allow camera access. For persistent sign-in, invitation, or sync failures, record the error message and contact stocktracksupport@gmail.com. Do not send your password.",
+      },
+      {
+        stepNumber: 11,
+        title: "Saving or printing a copy",
+        instruction: "To save this manual as a PDF, open Help & Tutorials, search for “manual,” expand Operations & Maintenance Manual, and tap Print / Save PDF Copy. In a web browser, choose Save as PDF in the print dialog. On a phone or tablet, use the share sheet to save or send the PDF.",
+      },
+    ],
+  },
 ];
-

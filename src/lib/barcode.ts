@@ -1,4 +1,4 @@
-import { toSVG } from "@bwip-js/react-native";
+import { toSVG } from '@bwip-js/react-native';
 import type { Product } from "../data/freshmart";
 import { getCurrency } from "../data/freshmart";
 import { escapeHtml } from "./escape-html";

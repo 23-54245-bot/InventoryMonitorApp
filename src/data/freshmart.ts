@@ -34,6 +34,29 @@ export type StockMovement = {
   note?: string;
 };
 
+export type PurchaseOrderStatus = "draft" | "ordered" | "partially_received" | "received" | "cancelled";
+
+export type PurchaseOrderItem = {
+  productId: string;
+  productName: string;
+  sku: string;
+  quantity: number;
+  unitCost: number;
+  receivedQuantity: number;
+};
+
+export type PurchaseOrder = {
+  id: string;
+  storeId: string;
+  supplierName: string;
+  invoiceNumber?: string;
+  status: PurchaseOrderStatus;
+  items: PurchaseOrderItem[];
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type NotificationType = "low_stock" | "expiry" | "stock_received" | "stock_out" | "info";
 
 export type NotificationItem = {

@@ -1,4 +1,4 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { Href } from "expo-router";
 import { useRouter } from "expo-router";
@@ -297,6 +297,10 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   scrollArea: {
+    // `maxHeight` alone does not give a React Native Web ScrollView a
+    // measurable layout height, so its children can render below the card.
+    // Give the content viewport an explicit height and let long steps scroll.
+    height: 280,
     maxHeight: 380,
   },
   iconWrap: {

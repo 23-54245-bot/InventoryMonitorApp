@@ -4,10 +4,16 @@ const path = require('path');
 const i18nPath = path.join(__dirname, '../src/lib/i18n.ts');
 const content = fs.readFileSync(i18nPath, 'utf8');
 
+// Only inspect the primary translation table. The supplemental table below it
+// intentionally contains a small set of overrides and must not replace the
+// complete locale entries in this health check.
+const translationsStart = content.indexOf('const translations');
+const supplementalStart = content.indexOf('const supplementalTranslations');
+const primaryTranslations = content.slice(translationsStart, supplementalStart);
 const regex = /([A-Za-z]+):\s*\{([\s\S]*?)(?=\n\s*[A-Za-z]+:\s*\{|\n\};)/g;
 let match;
 const languages = {};
-while ((match = regex.exec(content)) !== null) {
+while ((match = regex.exec(primaryTranslations)) !== null) {
   const lang = match[1];
   const block = match[2];
   const keys = new Set();

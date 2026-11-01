@@ -1,7 +1,6 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Redirect, useLocalSearchParams, useRouter, type Href } from "expo-router";
 import { useState } from "react";
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Button, Card, Text, TextInput, Title, useTheme } from "react-native-paper";
 import Animated, { FadeIn, FadeInDown, FadeInUp, FadeOutUp } from "react-native-reanimated";
 
@@ -169,7 +168,7 @@ export default function LoginScreen() {
         <View style={[styles.headerCircleLarge, { backgroundColor: `${theme.colors.onPrimary}12` }]} />
         <View style={[styles.headerCircleSmall, { backgroundColor: `${theme.colors.onPrimary}12` }]} />
         <View style={[styles.brandMark, Platform.OS === "web" && styles.webBrandMark]}>
-          <MaterialCommunityIcons name="warehouse" size={38} color={theme.colors.primary} />
+          <Image source={require("../../assets/images/stocktrack-logo-transparent.png")} style={[styles.brandLogo, Platform.OS === "web" && styles.webBrandLogo]} resizeMode="contain" />
         </View>
         <Title style={[styles.brandTitle, Platform.OS === "web" && styles.webBrandTitle, { color: theme.colors.onPrimary }]}>StockTrack</Title>
         <Text style={[styles.brandSubtitle, Platform.OS === "web" && styles.webBrandSubtitle, { color: `${theme.colors.onPrimary}cc` }]}>Inventory Management System</Text>
@@ -382,6 +381,8 @@ const styles = StyleSheet.create({
   headerCircleSmall: { position: "absolute", width: 170, height: 170, borderRadius: 85, top: -86, right: -62 },
   brandMark: { width: 78, height: 78, borderRadius: 24, alignItems: "center", justifyContent: "center", backgroundColor: "#ffffff", marginBottom: 14 },
   webBrandMark: { width: 58, height: 58, borderRadius: 18, marginBottom: 8 },
+  brandLogo: { width: 72, height: 72, borderRadius: 20 },
+  webBrandLogo: { width: 52, height: 52, borderRadius: 15 },
   brandTitle: { fontSize: 30, fontWeight: "800", marginBottom: 4 },
   webBrandTitle: { fontSize: 25, marginBottom: 2 },
   brandSubtitle: { fontSize: 16 },

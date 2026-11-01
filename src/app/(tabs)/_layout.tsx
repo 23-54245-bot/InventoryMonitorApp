@@ -1,4 +1,4 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import type { Href } from "expo-router";
 import { Redirect, Tabs, usePathname, useRouter } from "expo-router";
 import { useState } from "react";
@@ -68,6 +68,7 @@ export default function TabsLayout() {
     : [
       { label: translate(language, "posTitle"), icon: "cash-register", route: "/pos", accent: theme.colors.primary },
       { label: translate(language, "utangTitle"), icon: "book-account", route: "/utang", accent: theme.colors.tertiary },
+      { label: translate(language, "purchaseOrdersAction"), icon: "clipboard-list-outline", route: "/purchase-order", accent: theme.colors.secondary },
       { label: translate(language, "stockInLabel"), icon: "package-down", route: { pathname: "/stock-movement", params: { type: "in" } }, accent: theme.colors.secondary },
       { label: translate(language, "stockOutLabel"), icon: "package-up", route: { pathname: "/stock-movement", params: { type: "out" } }, accent: theme.colors.tertiary },
       { label: translate(language, "productAddButton"), icon: "tag-plus-outline", route: "/add-product", accent: theme.colors.error },
@@ -114,7 +115,7 @@ export default function TabsLayout() {
           {/* Brand Header */}
           <View style={styles.brandRow}>
             <Image
-              source={require("../../../assets/images/stocktrack-logo.png")}
+              source={require("../../../assets/images/stocktrack-logo-transparent.png")}
               style={styles.sidebarLogo}
               resizeMode="contain"
             />
@@ -243,7 +244,7 @@ export default function TabsLayout() {
               animation: "none",
               tabBarStyle: { display: "none" },
             }}
-            tabBar={({ state, navigation }) => {
+            tabBar={({ state }) => {
               const activeRouteName = state.routes[state.index]?.name ?? "index";
 
               return (
@@ -257,7 +258,7 @@ export default function TabsLayout() {
                     return (
                       <Pressable
                         key={item.name}
-                        onPress={() => navigation.navigate(item.name)}
+                        onPress={() => router.navigate((item.name === "index" ? "/(tabs)" : `/(tabs)/${item.name}`) as Href)}
                         style={styles.tabItem}
                       >
                         <View style={styles.tabItemIconWrap}>
